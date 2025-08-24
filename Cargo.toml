@@ -1,0 +1,32 @@
+[package]
+name = "lvp"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bon = "3.7.1"
+indicatif = "0.18.0"
+miette = { version = "7.6.0", features = ["fancy"] }
+ndarray = "0.16.1"
+rfd = "0.15.4"
+snafu = "0.8.7"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+video-rs = { version = "0.10.3", features = ["ndarray"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+enum_glob_use = "deny"
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+missing_docs_in_private_items = "warn"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
