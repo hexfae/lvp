@@ -1,25 +1,27 @@
 //! LUDD video processor.
+#![feature(thread_sleep_until)]
 
-use lvp::Video;
+use inquire::Text;
+use lvp::{Client, Video};
 use miette::{IntoDiagnostic, Report};
 use rfd::FileDialog;
-use tracing::info;
 
+#[allow(clippy::many_single_char_names)]
 fn main() -> Result<(), Report> {
     log()?;
     #[allow(clippy::unwrap_used)] // the function this function calls internally can never error
     video_rs::init().unwrap();
+
+    let input = Text::new("address and port:").prompt();
     let file = FileDialog::new().pick_file();
-    if let Some(path) = file {
-        let video = Video::from_path(path)?;
-        info!(
-            "processed {} frames with {} pixels each ({} total)",
-            video.n_frames(),
-            video.n_pixels_per_frame(),
-            video.n_pixels()
-        );
-    } else {
-        info!("yeah whatever, kid");
+    if let Some(path) = file
+        && let Ok(address) = input
+    {
+        loop {
+            let video = Video::from_path(&path)?;
+            let mut client = Client::new(video, &address);
+            client.send()?;
+        }
     }
     Ok(())
 }

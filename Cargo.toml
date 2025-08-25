@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 indicatif = "0.18.0"
+inquire = "0.7.5"
 miette = { version = "7.6.0", features = ["fancy"] }
 ndarray = "0.16.1"
 rfd = "0.15.4"
