@@ -1,10 +1,13 @@
-//! LUDD video processor.
-#![feature(thread_sleep_until)]
+//! pixelfLut (pixelpwnr) Video Processor.
 
 use inquire::Text;
-use lvp::{Client, Video};
+use lvp::Client;
 use miette::{IntoDiagnostic, Report};
 use rfd::FileDialog;
+use std::time::Duration;
+
+/// Ten seconds. how long the video plays.
+const TEN_SECONDS: Duration = Duration::from_secs(10);
 
 #[allow(clippy::many_single_char_names)]
 fn main() -> Result<(), Report> {
@@ -13,14 +16,14 @@ fn main() -> Result<(), Report> {
     video_rs::init().unwrap();
 
     let input = Text::new("address and port:").prompt();
-    let file = FileDialog::new().pick_file();
+    let file = FileDialog::new().pick_folder();
     if let Some(path) = file
         && let Ok(address) = input
     {
+        let mut client = Client::new(&path, &address)?;
         loop {
-            let video = Video::from_path(&path)?;
-            let mut client = Client::new(video, &address);
-            client.send()?;
+            client.send(TEN_SECONDS)?;
+            client.switch_video()?;
         }
     }
     Ok(())
