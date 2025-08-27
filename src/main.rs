@@ -1,25 +1,30 @@
-//! LUDD video processor.
+//! pixelfLut (pixelpwnr) Video Processor.
 
-use lvp::Video;
+use inquire::Text;
+use lvp::Client;
 use miette::{IntoDiagnostic, Report};
 use rfd::FileDialog;
-use tracing::info;
+use std::time::Duration;
 
+/// Ten seconds. how long the video plays.
+const TEN_SECONDS: Duration = Duration::from_secs(10);
+
+#[allow(clippy::many_single_char_names)]
 fn main() -> Result<(), Report> {
     log()?;
     #[allow(clippy::unwrap_used)] // the function this function calls internally can never error
     video_rs::init().unwrap();
-    let file = FileDialog::new().pick_file();
-    if let Some(path) = file {
-        let video = Video::from_path(path)?;
-        info!(
-            "processed {} frames with {} pixels each ({} total)",
-            video.n_frames(),
-            video.n_pixels_per_frame(),
-            video.n_pixels()
-        );
-    } else {
-        info!("yeah whatever, kid");
+
+    let input = Text::new("address and port:").prompt();
+    let file = FileDialog::new().pick_folder();
+    if let Some(path) = file
+        && let Ok(address) = input
+    {
+        let mut client = Client::new(&path, &address)?;
+        loop {
+            client.send(TEN_SECONDS)?;
+            client.switch_video()?;
+        }
     }
     Ok(())
 }

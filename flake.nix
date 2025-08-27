@@ -40,6 +40,7 @@
             ffmpeg-headless
             libclang
             wayland
+            libxkbcommon # needed for pixelpwnr-server
           ];
           nativeBuildInputs = with pkgs; [
             mold

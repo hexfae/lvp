@@ -1,10 +1,8 @@
 //! LUDD video processor.
 
+pub mod client;
 pub mod video;
 
-pub use video::Frame;
-pub use video::Pixel;
-pub use video::Video;
-
-pub use video::MetadataError;
+pub use client::Client;
 pub use video::ProcessingError;
+pub use video::Video;

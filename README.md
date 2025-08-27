@@ -1,8 +1,13 @@
-# ludd video processor
+# pixelfLut Video Processor
 
-processes videos for the ludd tv
+originally [ludd](https://ludd.ltu.se/) video processor
 
-i don't actually know how the tv works yet so this is the best i can do right now
+processes videos for pixelflut, specifically [pixelpwnr](https://github.com/timvisee/pixelpwnr-server)
+servers (since those have the "binary PX" command, PB, which this uses exclusively)
+
+## To-do list
+
+- [ ] A Web UI?
 
 ## License
 
