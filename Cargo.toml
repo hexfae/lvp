@@ -4,12 +4,9 @@ version = "0.2.0"
 edition = "2024"
 
 [dependencies]
-indicatif = "0.18.0"
 inquire = "0.7.5"
-miette = { version = "7.6.0", features = ["fancy"] }
 ndarray = "0.16.1"
 rand = "0.9.2"
-rfd = "0.15.4"
 snafu = "0.8.7"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }

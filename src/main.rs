@@ -1,44 +1,51 @@
-//! pixelfLut (pixelpwnr) Video Processor.
-
+//! pixelfLut (pixelpwnr) Video Processor
+#![feature(thread_sleep_until)]
 use inquire::Text;
 use lvp::Client;
-use miette::{IntoDiagnostic, Report};
-use rfd::FileDialog;
 use std::time::Duration;
+use tracing::error;
 
 /// Ten seconds. how long the video plays.
 const TEN_SECONDS: Duration = Duration::from_secs(10);
 
-#[allow(clippy::many_single_char_names)]
-fn main() -> Result<(), Report> {
-    log()?;
-    #[allow(clippy::unwrap_used)] // the function this function calls internally can never error
-    video_rs::init().unwrap();
+/// A catch-all error.
+type Error = Box<dyn std::error::Error>;
 
-    let input = Text::new("address and port:").prompt();
-    let file = FileDialog::new().pick_folder();
-    if let Some(path) = file
-        && let Ok(address) = input
-    {
-        let mut client = Client::new(&path, &address)?;
-        loop {
-            client.send(TEN_SECONDS)?;
-            client.switch_video()?;
+fn main() -> Result<(), Error> {
+    log()?;
+    video_rs::init().expect("ffmpeg installed");
+
+    let Ok(address) = Text::new("address and port:").prompt() else {
+        println!("no address and port was given :(");
+        return Ok(());
+    };
+    let Ok(path) = Text::new("video storage directory:").prompt() else {
+        println!("no video storage directory was given :(");
+        return Ok(());
+    };
+
+    let mut rng = rand::rng();
+    let mut client = Client::new(&mut rng, path, address)?;
+
+    loop {
+        if let Err(why) = client.send(TEN_SECONDS) {
+            error!("error while sending video: {why}");
+        }
+        if let Err(why) = client.switch_video(&mut rng) {
+            error!("error while switching video: {why}");
         }
     }
-    Ok(())
 }
 
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::EnvFilter;
 
 /// Start logging with LVP set to DEBUG and everything else to INFO.
-fn log() -> Result<(), Report> {
+fn log() -> Result<(), Error> {
     let filter = EnvFilter::builder()
         .with_default_directive(LevelFilter::INFO.into())
-        .from_env()
-        .into_diagnostic()?
-        .add_directive("lvp=debug".parse().into_diagnostic()?);
+        .from_env()?
+        .add_directive("lvp=debug".parse()?);
     tracing_subscriber::fmt().with_env_filter(filter).init();
     Ok(())
 }

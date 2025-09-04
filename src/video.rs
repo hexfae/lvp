@@ -1,7 +1,6 @@
 //! Process a video from a path into a [`Video`].
 
-use miette::Diagnostic;
-use rand::seq::{IndexedRandom, IteratorRandom};
+use rand::{Rng, rngs::ThreadRng, seq::IteratorRandom};
 use snafu::{OptionExt, ResultExt, Snafu};
 use std::{num::TryFromIntError, path::PathBuf};
 use tracing::debug;
@@ -11,11 +10,27 @@ use walkdir::WalkDir;
 /// The filename of the static played between videos.
 pub const STATIC_VIDEO: &str = "static.mp4";
 
-/// Ten seconds as expressed in milliseconds (10 thousand).
-const FIFTEEN_SECONDS: i64 = 15 * 1000;
+/// Twenty seconds as expressed in milliseconds (20 thousand).
+///
+/// The reason why it is 20 and not e.g. 10 is because it can only seek to certain points
+/// of the video, and if it seeks to the very end of the range it can jump forward a little
+/// bit and thus exhaust the stream.
+const TWENTY_SECONDS: i64 = 20 * 1000;
 
 /// What to multiply seconds with to get milliseconds.
-const TO_MILLI: i64 = 1000;
+const TO_MILLI: f32 = 1000.0;
+
+/// A look-up-table for the reduced color "resolution" of videos.
+const LUT: [u8; 256] = {
+    let mut table = [0; 256];
+    let mut i = 0;
+    #[expect(clippy::cast_possible_truncation)]
+    while i < 256 {
+        table[i] = ((i as u8) / 10) * 10;
+        i += 1;
+    }
+    table
+};
 
 pub type Frame = Vec<u8>;
 
@@ -29,7 +44,7 @@ pub struct Video {
 }
 
 /// All errors that can occur while processing a video.
-#[derive(Debug, Snafu, Diagnostic)]
+#[derive(Debug, Snafu)]
 pub enum ProcessingError {
     /// Creating the decoder failed.
     ///
@@ -75,11 +90,11 @@ impl Video {
     /// Returns an error if no video was found, a decoder could not be built,
     /// the metadata is corrupted, or it attempted to seek to an invalid point.
     pub fn from_directory(
+        rng: &mut ThreadRng,
         path: impl Into<PathBuf>,
         except: Option<String>,
     ) -> Result<Self, ProcessingError> {
         let path = if let Some(name) = except {
-            let mut rng = rand::rng();
             WalkDir::new(path.into())
                 .max_depth(1)
                 .into_iter()
@@ -87,24 +102,16 @@ impl Video {
                 .filter(|entry| entry.file_type().is_file())
                 .filter(|entry| entry.file_name() != STATIC_VIDEO)
                 .filter(|entry| entry.file_name().to_string_lossy() != name)
-                .choose(&mut rng)
+                .choose(rng)
                 .context(NoVideoFoundSnafu)?
                 .into_path()
         } else {
-            path.into().join("static.mp4")
+            path.into().join(STATIC_VIDEO)
         };
         let mut decoder = DecoderBuilder::new(&*path)
             .with_options(&Options::preset_h264_realtime())
             .build()
             .context(CreateDecoderSnafu)?;
-
-        let mut rng = rand::rng();
-        let duration = decoder.duration().context(MetadataSnafu)?;
-        #[allow(clippy::cast_possible_truncation)] // i won't upload videos that long
-        let duration = (duration.as_secs() as i64 * TO_MILLI) - FIFTEEN_SECONDS;
-        let range = (0..=duration).collect::<Vec<_>>();
-        let timestamp = range.choose(&mut rng).copied().unwrap_or_default();
-        decoder.seek(timestamp).context(VideoSeekSnafu)?;
 
         let frame_rate = decoder.frame_rate();
         let name = path
@@ -112,28 +119,21 @@ impl Video {
             .unwrap_or_default()
             .to_string_lossy()
             .to_string();
-        debug!("loaded {name} ({frame_rate}fps)",);
+
+        if name != STATIC_VIDEO {
+            debug!("loaded {name} ({frame_rate}fps)",);
+            let duration = decoder.duration().context(MetadataSnafu)?;
+            #[expect(clippy::cast_possible_truncation)] // this does not matter
+            let millis = (duration.as_secs() * TO_MILLI) as i64;
+            let timestamp = rng.random_range(0..=(millis - TWENTY_SECONDS));
+            decoder.seek(timestamp).context(VideoSeekSnafu)?;
+        }
 
         Ok(Self { decoder, name })
     }
 
     #[must_use]
-    pub fn width(&self) -> u32 {
-        self.decoder.size().0
-    }
-
-    #[must_use]
-    pub fn height(&self) -> u32 {
-        self.decoder.size().1
-    }
-
-    #[must_use]
     pub fn frame_rate(&self) -> f32 {
-        self.decoder.frame_rate()
-    }
-
-    #[must_use]
-    pub fn duration(&self) -> f32 {
         self.decoder.frame_rate()
     }
 
@@ -148,20 +148,19 @@ impl Iterator for Video {
 
     fn next(&mut self) -> Option<Self::Item> {
         match self.decoder.decode() {
-            Ok((_timestamp, frame)) => {
-                let frame_pixels = frame
-                    .as_slice()
-                    .context(ArrayToSliceSnafu)
-                    .map(<[u8]>::to_vec);
-                Some(frame_pixels)
-            }
-            Err(e) => {
-                if matches!(e, video_rs::Error::ReadExhausted) {
-                    return None;
+            Ok((_, mut frame)) => {
+                let Some(slice) = frame.as_slice_mut() else {
+                    return Some(Err(ProcessingError::ArrayToSlice));
+                };
+
+                for byte in slice.iter_mut() {
+                    *byte = LUT[*byte as usize];
                 }
 
-                Some(Err(ProcessingError::DecodeStream { source: e }))
+                Some(Ok(slice.to_vec()))
             }
+            Err(video_rs::Error::ReadExhausted) => None,
+            Err(e) => Some(Err(ProcessingError::DecodeStream { source: e })),
         }
     }
 }
