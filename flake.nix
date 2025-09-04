@@ -30,25 +30,29 @@
           cargo = rust-nightly;
           rustc = rust-nightly;
         };
+        buildInputs = with pkgs; [
+          ffmpeg-headless
+          libclang
+        ];
+        nativeBuildInputs = with pkgs; [
+          mold
+          clang
+          rust-nightly
+          pkg-config
+        ];
+        LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath buildInputs;
       in {
         defaultPackage = naersk.buildPackage {
+          inherit buildInputs;
+          inherit nativeBuildInputs;
+          inherit LD_LIBRARY_PATH;
           src = ./.;
         };
 
-        devShell = pkgs.mkShell rec {
-          buildInputs = with pkgs; [
-            ffmpeg-headless
-            libclang
-            wayland
-            libxkbcommon # needed for pixelpwnr-server
-          ];
-          nativeBuildInputs = with pkgs; [
-            mold
-            clang
-            rust-nightly
-            pkg-config
-          ];
-          LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath buildInputs;
+        devShell = pkgs.mkShell {
+          inherit buildInputs;
+          inherit nativeBuildInputs;
+          inherit LD_LIBRARY_PATH;
         };
       }
     );
