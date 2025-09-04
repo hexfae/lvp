@@ -1,7 +1,7 @@
 //! pixelfLut (pixelpwnr) Video Processor
 #![feature(thread_sleep_until)]
-use inquire::Text;
-use lvp::Client;
+use clap::Parser;
+use lvp::{Args, Client};
 use std::time::Duration;
 use tracing::error;
 
@@ -15,17 +15,9 @@ fn main() -> Result<(), Error> {
     log()?;
     video_rs::init().expect("ffmpeg installed");
 
-    let Ok(address) = Text::new("address and port:").prompt() else {
-        println!("no address and port was given :(");
-        return Ok(());
-    };
-    let Ok(path) = Text::new("video storage directory:").prompt() else {
-        println!("no video storage directory was given :(");
-        return Ok(());
-    };
-
+    let args = Args::parse();
     let mut rng = rand::rng();
-    let mut client = Client::new(&mut rng, path, address)?;
+    let mut client = Client::new(&mut rng, args)?;
 
     loop {
         if let Err(why) = client.send(TEN_SECONDS) {

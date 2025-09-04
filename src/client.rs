@@ -1,14 +1,13 @@
 //! The client responsible for sending TCP packets to the pixelflut (pixelpwnr) server.
 use crate::{
-    ProcessingError,
+    Args, ProcessingError,
     video::{STATIC_VIDEO, Video},
 };
 use rand::rngs::ThreadRng;
 use snafu::{ResultExt, Snafu};
 use std::{
     io::Write,
-    net::{TcpStream, ToSocketAddrs},
-    ops::Range,
+    net::TcpStream,
     path::PathBuf,
     thread::sleep_until,
     time::{Duration, Instant},
@@ -18,23 +17,8 @@ use tracing::warn;
 /// One second. How long the static plays when switching a video.
 const ONE_SECOND: Duration = Duration::from_secs(1);
 
-/// The first and second byte of the command, where the operation is placed.
-const OPERATION: Range<usize> = 0..2;
-
 /// The pixel binary command as specified by [pixelpwnr](https://github.com/timvisee/pixelpwnr-server).
 const PB: &[u8; 2] = b"PB";
-
-/// The third and fourth byte of the command, where the x position is placed.
-const X: Range<usize> = 2..4;
-
-/// The fifth and sixth byte of the command, where the y position is placed.
-const Y: Range<usize> = 4..6;
-
-/// The seventh to ninth bytes of the command, where the color is placed.
-const RGB: Range<usize> = 6..9;
-
-/// The tenth and final byte of the command, where the alpha is placed.
-const ALPHA: usize = 9;
 
 /// A fully opaque pixel, alpha 255.
 const OPAQUE: u8 = u8::MAX;
@@ -54,20 +38,34 @@ const VIDEO_HEIGHT: usize = 360;
 /// The amount of bytes per pixel in RGB24 (R, G, B);
 const BYTES_PER_PIXEL: usize = 3;
 
-/// The amount of bytes per PB command.
-const BYTES_PER_COMMAND: usize = 10;
+/// The (expected) max amount of bytes per PX command.
+///
+/// 3 for `PX` and a space, 5 for the x position and a space, 5 for the y position
+/// and a space, 7 for RR/GG/BB and a newline.
+const MAX_BYTES_PER_TEXT_COMMAND: usize = 20;
+
+/// The amount of bytes per PB command (for
+/// [pixelpwnr-server](github.com/timvisee/pixelpwnr-server)).
+///
+/// 2 for `PB`, 2 for the x position, 2 for the y position, 4 for R/G/B/A.
+const BYTES_PER_BINARY_COMMAND: usize = 10;
 
 /// The amount of bytes per frame as represented by RGB24.
 const PIXEL_BUFFER_SIZE: usize = VIDEO_WIDTH * VIDEO_HEIGHT * BYTES_PER_PIXEL;
 
+/// The amount of bytes per frame as represented by PX commands.
+const TEXT_COMMAND_BUFFER_SIZE: usize = VIDEO_WIDTH * VIDEO_HEIGHT * MAX_BYTES_PER_TEXT_COMMAND;
+
 /// The amount of bytes per frame as represented by PB commands.
-const COMMAND_BUFFER_SIZE: usize = VIDEO_WIDTH * VIDEO_HEIGHT * BYTES_PER_COMMAND;
+const BINARY_COMMAND_BUFFER_SIZE: usize = VIDEO_WIDTH * VIDEO_HEIGHT * BYTES_PER_BINARY_COMMAND;
 
 pub struct Client {
     /// The TCP stream to send frames to.
     stream: TcpStream,
     /// The path to a folder of videos.
     path: PathBuf,
+    /// Whether to use binary commands, for pixelpwnr servers.
+    binary: bool,
     /// The currently loaded video, to be processed and sent.
     video: Video,
     /// A cache of the previous frame's pixels, to only send changed pixels.
@@ -105,22 +103,24 @@ impl Client {
     ///
     /// Returns an error if a video could not be loaded (see [`Video::from_directory`]
     /// or a TCP stream could not be created.
-    pub fn new(
-        rng: &mut ThreadRng,
-        path: impl Into<PathBuf>,
-        address: impl ToSocketAddrs,
-    ) -> Result<Self, ClientError> {
-        let path = path.into();
+    pub fn new(rng: &mut ThreadRng, args: Args) -> Result<Self, ClientError> {
+        let path = args.path.into();
+        let binary = args.binary;
         let video = Video::from_directory(rng, &path, Some(STATIC_VIDEO.into()))?;
-        let stream = TcpStream::connect(address).context(CreateConnectionSnafu)?;
+        let stream = TcpStream::connect(args.address).context(CreateConnectionSnafu)?;
         stream.set_nodelay(true).context(CreateConnectionSnafu)?;
 
         let pixel_cache = vec![0; PIXEL_BUFFER_SIZE];
-        let command_buffer = vec![0; COMMAND_BUFFER_SIZE];
+        let command_buffer = if binary {
+            vec![0; BINARY_COMMAND_BUFFER_SIZE]
+        } else {
+            vec![0; TEXT_COMMAND_BUFFER_SIZE]
+        };
 
         Ok(Self {
             stream,
             path,
+            binary,
             video,
             pixel_cache,
             command_buffer,
@@ -151,6 +151,7 @@ impl Client {
     pub fn send(&mut self, play_for: Duration) -> Result<(), ClientError> {
         let video_start = Instant::now();
         let time_between_frames = Duration::from_secs_f32(1.0 / self.video.frame_rate());
+        let binary = self.binary;
         let mut deadline = Instant::now();
         let mut frames_to_drop = 0;
 
@@ -171,16 +172,20 @@ impl Client {
 
                 if new_pixel_chunk != cached_pixel_chunk {
                     let (x, y) = bottom_right_coordinates(index);
-                    let mut command = [0u8; BYTES_PER_COMMAND];
 
-                    // https://github.com/timvisee/pixelpwnr-server#the-binary-px-command
-                    command[OPERATION].copy_from_slice(PB);
-                    command[X].copy_from_slice(&x.to_le_bytes());
-                    command[Y].copy_from_slice(&y.to_le_bytes());
-                    command[RGB].copy_from_slice(new_pixel_chunk);
-                    command[ALPHA] = OPAQUE;
-
-                    self.command_buffer.extend_from_slice(&command);
+                    if binary {
+                        self.command_buffer.extend_from_slice(PB);
+                        self.command_buffer.extend_from_slice(&x.to_le_bytes());
+                        self.command_buffer.extend_from_slice(&y.to_le_bytes());
+                        self.command_buffer.extend_from_slice(new_pixel_chunk);
+                        self.command_buffer.push(OPAQUE);
+                    } else {
+                        let (red, green, blue) =
+                            (new_pixel_chunk[0], new_pixel_chunk[1], new_pixel_chunk[2]);
+                        self.command_buffer.extend_from_slice(
+                            format!("PX {x} {y} {red:02X}{green:02X}{blue:02X}\n").as_bytes(),
+                        );
+                    }
 
                     self.pixel_cache[cache_start_index..cache_end_index]
                         .copy_from_slice(new_pixel_chunk);

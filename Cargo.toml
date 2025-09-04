@@ -4,7 +4,7 @@ version = "0.2.0"
 edition = "2024"
 
 [dependencies]
-inquire = "0.7.5"
+clap = { version = "4.5.47", features = ["derive"] }
 ndarray = "0.16.1"
 rand = "0.9.2"
 snafu = "0.8.7"
