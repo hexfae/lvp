@@ -10,6 +10,11 @@ use walkdir::WalkDir;
 /// The filename of the static played between videos.
 pub const STATIC_VIDEO: &str = "static.mp4";
 
+/// Ten seconds in milliseconds.
+///
+/// This ensures that videos won't have their random timestamp be right at the end and immediately end.
+pub const TEN_SECONDS_IN_MILLISECONDS: i64 = 10 * 1000;
+
 /// What to multiply seconds with to get milliseconds.
 const TO_MILLI: f32 = 1000.0;
 
@@ -128,7 +133,7 @@ impl Video {
         let duration = decoder.duration().context(MetadataSnafu)?;
         #[expect(clippy::cast_possible_truncation)] // this does not matter
         let millis = (duration.as_secs() * TO_MILLI) as i64;
-        let timestamp = rng.random_range(0..millis);
+        let timestamp = rng.random_range(0..millis.saturating_sub(TEN_SECONDS_IN_MILLISECONDS));
         decoder.seek(timestamp).context(VideoSeekSnafu)?;
 
         Ok(Self { decoder, name })

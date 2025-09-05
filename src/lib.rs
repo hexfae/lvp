@@ -17,11 +17,19 @@ pub struct Args {
     #[arg(short, long)]
     address: String,
 
-    /// The path where videos are stored.
+    /// The path to the directory where videos are stored.
     #[arg(short, long)]
     path: String,
 
     /// Use binary pixel commands (PB). Recommended if connecting to a pixelpwnr server.
     #[arg(short, long)]
     binary: bool,
+}
+
+impl Args {
+    /// Returns the directory where videos are stored.
+    #[must_use]
+    pub fn path(&self) -> &str {
+        &self.path
+    }
 }

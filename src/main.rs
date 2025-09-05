@@ -21,14 +21,14 @@ async fn main() -> Result<(), Error> {
 
     let args = Args::parse();
     let mut rng = rand::rng();
-    let mut client = Client::new(args).await?;
+    let mut client = Client::new(&args).await?;
 
     loop {
-        let video = Video::from_directory(&mut rng, client.path())?;
+        let video = Video::from_directory(&mut rng, args.path())?;
         if let Err(why) = client.send(video, TEN_SECONDS).await {
             error!("error while sending video: {why}");
         }
-        let video = Video::load_static(client.path())?;
+        let video = Video::load_static(args.path())?;
         if let Err(why) = client.send(video, ONE_SECOND).await {
             error!("error while sending video: {why}");
         }
