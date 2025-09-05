@@ -17,11 +17,11 @@ async fn main() -> Result<(), Error> {
     let mut client = Client::new(&args).await?;
 
     loop {
-        let video = Video::from_directory(&mut rng, args.path())?;
+        let video = Video::from_directory(&mut rng, args.directory())?;
         if let Err(why) = client.send(video, TEN_SECONDS).await {
             error!("error while sending video: {why}");
         }
-        let video = Video::load_static(args.path())?;
+        let video = Video::load_static(args.directory())?;
         if let Err(why) = client.send(video, ONE_SECOND).await {
             error!("error while sending video: {why}");
         }

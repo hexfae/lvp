@@ -18,7 +18,7 @@ pub struct Args {
 
     /// The path to the directory where videos are stored.
     #[arg(short, long)]
-    path: String,
+    directory: String,
 
     /// Use binary pixel commands (PB). Recommended if connecting to a pixelpwnr server.
     #[arg(short, long)]
@@ -28,7 +28,7 @@ pub struct Args {
 impl Args {
     /// Returns the directory where videos are stored.
     #[must_use]
-    pub fn path(&self) -> &str {
-        &self.path
+    pub fn directory(&self) -> &str {
+        &self.directory
     }
 }
