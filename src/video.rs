@@ -1,7 +1,7 @@
 //! Process a video from a path into a [`Video`].
 
 use rand::{Rng, rngs::ThreadRng, seq::IteratorRandom};
-use snafu::{OptionExt, ResultExt, Snafu};
+use snafu::{OptionExt, ResultExt, Snafu, ensure};
 use std::{num::TryFromIntError, path::PathBuf};
 use tracing::debug;
 use video_rs::{DecoderBuilder, Options, decode::Decoder};
@@ -9,13 +9,6 @@ use walkdir::WalkDir;
 
 /// The filename of the static played between videos.
 pub const STATIC_VIDEO: &str = "static.mp4";
-
-/// Twenty seconds as expressed in milliseconds (20 thousand).
-///
-/// The reason why it is 20 and not e.g. 10 is because it can only seek to certain points
-/// of the video, and if it seeks to the very end of the range it can jump forward a little
-/// bit and thus exhaust the stream.
-const TWENTY_SECONDS: i64 = 20 * 1000;
 
 /// What to multiply seconds with to get milliseconds.
 const TO_MILLI: f32 = 1000.0;
@@ -77,12 +70,28 @@ pub enum ProcessingError {
     #[snafu(display("error while casting u64 to usize: {source}"))]
     TooManyFrames { source: TryFromIntError },
     #[snafu(display("no videos found in the selected folder"))]
-    NoVideoFound,
+    NoVideoFound { path: PathBuf },
     #[snafu(display("error while seeking in video: {source}"))]
     VideoSeekError { source: video_rs::Error },
 }
 
 impl Video {
+    /// Loads the video of static.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a `static.mp4` file wasn't found in the given directory.
+    pub fn load_static(path: impl Into<PathBuf>) -> Result<Self, ProcessingError> {
+        let path = path.into().join(STATIC_VIDEO);
+        let name = "static".to_owned();
+        ensure!(path.exists(), NoVideoFoundSnafu { path });
+        let decoder = DecoderBuilder::new(path)
+            .with_options(&Options::preset_h264_realtime())
+            .build()
+            .context(CreateDecoderSnafu)?;
+        Ok(Self { decoder, name })
+    }
+
     /// Loads a random video from the given directory.
     ///
     /// # Errors
@@ -92,22 +101,17 @@ impl Video {
     pub fn from_directory(
         rng: &mut ThreadRng,
         path: impl Into<PathBuf>,
-        except: Option<String>,
     ) -> Result<Self, ProcessingError> {
-        let path = if let Some(name) = except {
-            WalkDir::new(path.into())
-                .max_depth(1)
-                .into_iter()
-                .filter_map(Result::ok)
-                .filter(|entry| entry.file_type().is_file())
-                .filter(|entry| entry.file_name() != STATIC_VIDEO)
-                .filter(|entry| entry.file_name().to_string_lossy() != name)
-                .choose(rng)
-                .context(NoVideoFoundSnafu)?
-                .into_path()
-        } else {
-            path.into().join(STATIC_VIDEO)
-        };
+        let path = path.into();
+        let path = WalkDir::new(&path)
+            .max_depth(1)
+            .into_iter()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().is_file())
+            .filter(|entry| entry.file_name() != STATIC_VIDEO)
+            .choose(rng)
+            .context(NoVideoFoundSnafu { path })?
+            .into_path();
         let mut decoder = DecoderBuilder::new(&*path)
             .with_options(&Options::preset_h264_realtime())
             .build()
@@ -120,14 +124,12 @@ impl Video {
             .to_string_lossy()
             .to_string();
 
-        if name != STATIC_VIDEO {
-            debug!("loaded {name} ({frame_rate}fps)",);
-            let duration = decoder.duration().context(MetadataSnafu)?;
-            #[expect(clippy::cast_possible_truncation)] // this does not matter
-            let millis = (duration.as_secs() * TO_MILLI) as i64;
-            let timestamp = rng.random_range(0..=(millis - TWENTY_SECONDS));
-            decoder.seek(timestamp).context(VideoSeekSnafu)?;
-        }
+        debug!("loaded {name} ({frame_rate}fps)",);
+        let duration = decoder.duration().context(MetadataSnafu)?;
+        #[expect(clippy::cast_possible_truncation)] // this does not matter
+        let millis = (duration.as_secs() * TO_MILLI) as i64;
+        let timestamp = rng.random_range(0..millis);
+        decoder.seek(timestamp).context(VideoSeekSnafu)?;
 
         Ok(Self { decoder, name })
     }

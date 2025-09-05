@@ -1,30 +1,36 @@
 //! pixelfLut (pixelpwnr) Video Processor
 #![feature(thread_sleep_until)]
 use clap::Parser;
-use lvp::{Args, Client};
+use lvp::{Args, Client, Video};
 use std::time::Duration;
 use tracing::error;
 
-/// Ten seconds. how long the video plays.
+/// Ten seconds. How long the static plays.
+const ONE_SECOND: Duration = Duration::from_secs(1);
+
+/// Ten seconds. How long the video plays.
 const TEN_SECONDS: Duration = Duration::from_secs(10);
 
 /// A catch-all error.
 type Error = Box<dyn std::error::Error>;
 
-fn main() -> Result<(), Error> {
+#[tokio::main]
+async fn main() -> Result<(), Error> {
     log()?;
     video_rs::init().expect("ffmpeg installed");
 
     let args = Args::parse();
     let mut rng = rand::rng();
-    let mut client = Client::new(&mut rng, args)?;
+    let mut client = Client::new(args).await?;
 
     loop {
-        if let Err(why) = client.send(TEN_SECONDS) {
+        let video = Video::from_directory(&mut rng, client.path())?;
+        if let Err(why) = client.send(video, TEN_SECONDS).await {
             error!("error while sending video: {why}");
         }
-        if let Err(why) = client.switch_video(&mut rng) {
-            error!("error while switching video: {why}");
+        let video = Video::load_static(client.path())?;
+        if let Err(why) = client.send(video, ONE_SECOND).await {
+            error!("error while sending video: {why}");
         }
     }
 }
