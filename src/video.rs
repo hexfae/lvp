@@ -2,18 +2,18 @@
 
 use rand::{Rng, rngs::ThreadRng, seq::IteratorRandom};
 use snafu::{OptionExt, ResultExt, Snafu, ensure};
-use std::{num::TryFromIntError, path::PathBuf};
+use std::path::PathBuf;
 use tracing::debug;
 use video_rs::{DecoderBuilder, Options, decode::Decoder};
 use walkdir::WalkDir;
 
 /// The filename of the static played between videos.
-pub const STATIC_VIDEO: &str = "static.mp4";
+const STATIC_VIDEO: &str = "static.mp4";
 
 /// Ten seconds in milliseconds.
 ///
 /// This ensures that videos won't have their random timestamp be right at the end and immediately end.
-pub const TEN_SECONDS_IN_MILLISECONDS: i64 = 10 * 1000;
+const TEN_SECONDS_IN_MILLISECONDS: i64 = 10 * 1000;
 
 /// What to multiply seconds with to get milliseconds.
 const TO_MILLI: f32 = 1000.0;
@@ -30,8 +30,10 @@ const LUT: [u8; 256] = {
     table
 };
 
-pub type Frame = Vec<u8>;
+/// The bytes that make up a frame of a video.
+type Frame = Vec<u8>;
 
+/// A video that is to be decoded.
 pub struct Video {
     /// The video's decoder.
     ///
@@ -59,23 +61,15 @@ pub enum ProcessingError {
     /// Probably something wrong with the file.
     #[snafu(display("error while decoding stream: {source}"))]
     DecodeStream { source: video_rs::Error },
-    /// Converting the array of pixels to a slice failed.
-    ///
-    /// Apparently, this can happen if it's non-contiguous and/or in non-standard order.
-    #[snafu(display("error while converting array to slice"))]
-    ArrayToSlice,
-    /// There were too many pixels (for a 32-bit system).
-    ///
-    /// This can happen if the amount of pixels > [`u32::MAX`] and it tries to cast that as [`usize`].
-    #[snafu(display("error while casting u64 to usize: {source}"))]
-    TooManyPixels { source: TryFromIntError },
-    /// There were too many frames (for a 32-bit system).
-    ///
-    /// This can happen if the amount of frames > [`u32::MAX`] and it tries to cast that as [`usize`].
-    #[snafu(display("error while casting u64 to usize: {source}"))]
-    TooManyFrames { source: TryFromIntError },
-    #[snafu(display("no videos found in the selected folder"))]
+    /// The directory contained no videos (that aren't `static.mp4`).
+    #[snafu(display("no videos found in {}", path.display()))]
     NoVideoFound { path: PathBuf },
+    /// The directory did not contain a file called `static.mp4`.
+    #[snafu(display("no static.mp4 found in {}", path.display()))]
+    NoStaticFound { path: PathBuf },
+    /// Seeking in the video failed.
+    ///
+    /// Probably it tried to go to before or after the video somehow.
     #[snafu(display("error while seeking in video: {source}"))]
     VideoSeekError { source: video_rs::Error },
 }
@@ -89,7 +83,7 @@ impl Video {
     pub fn load_static(path: impl Into<PathBuf>) -> Result<Self, ProcessingError> {
         let path = path.into().join(STATIC_VIDEO);
         let name = "static".to_owned();
-        ensure!(path.exists(), NoVideoFoundSnafu { path });
+        ensure!(path.exists(), NoStaticFoundSnafu { path });
         let decoder = DecoderBuilder::new(path)
             .with_options(&Options::preset_h264_realtime())
             .build()
@@ -156,15 +150,12 @@ impl Iterator for Video {
     fn next(&mut self) -> Option<Self::Item> {
         match self.decoder.decode() {
             Ok((_, mut frame)) => {
-                let Some(slice) = frame.as_slice_mut() else {
-                    return Some(Err(ProcessingError::ArrayToSlice));
-                };
+                frame
+                    .iter_mut()
+                    .for_each(|byte| *byte = LUT[*byte as usize]);
 
-                for byte in slice.iter_mut() {
-                    *byte = LUT[*byte as usize];
-                }
-
-                Some(Ok(slice.to_vec()))
+                #[expect(deprecated)] // not relevant for our use case
+                Some(Ok(frame.into_raw_vec()))
             }
             Err(video_rs::Error::ReadExhausted) => None,
             Err(e) => Some(Err(ProcessingError::DecodeStream { source: e })),

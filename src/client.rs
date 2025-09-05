@@ -53,6 +53,7 @@ const TEXT_COMMAND_BUFFER_SIZE: usize = VIDEO_WIDTH * VIDEO_HEIGHT * MAX_BYTES_P
 /// The amount of bytes per frame as represented by PB commands.
 const BINARY_COMMAND_BUFFER_SIZE: usize = VIDEO_WIDTH * VIDEO_HEIGHT * BYTES_PER_BINARY_COMMAND;
 
+/// The client responsible for sending TCP packets to a server.
 pub struct Client {
     /// The TCP stream to send frames to.
     stream: TcpStream,
@@ -73,7 +74,7 @@ pub enum ClientError {
     /// Creating the connection failed.
     ///
     /// Probably the address was incorrect (or is not hosting pixelflut).
-    #[snafu(display("could not create tcp connection to {address}"))]
+    #[snafu(display("could not create tcp connection to {address} because: {source}"))]
     CreateConnection {
         source: std::io::Error,
         address: String,
