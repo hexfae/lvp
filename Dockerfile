@@ -1,28 +1,43 @@
-FROM nixos/nix:2.18.3 AS builder
+FROM rust:latest AS cargo-build
 
-RUN nix-channel --update
-RUN echo "experimental-features = nix-command flakes" >> /etc/nix/nix.conf
+RUN apt-get update
 
-WORKDIR /app
+RUN apt-get install pkg-config libavutil-dev libavformat-dev libavdevice-dev libswscale-dev libavcodec-dev libclang-dev -y
 
-COPY Cargo.toml Cargo.lock flake.nix flake.lock .
+WORKDIR /usr/src/lvp
+
+COPY Cargo.toml Cargo.toml
 
 RUN mkdir src/
 
 RUN echo "fn main() {}" > src/main.rs
 
-RUN nix build
+RUN cargo build --release
 
 RUN rm -f target/release/deps/lvp*
 
-COPY src src
+COPY . .
 
-RUN nix build
+RUN cargo build --release
 
-FROM busybox:glibc
+# ---
 
-COPY --from=builder /app/result/bin/lvp /app/result/bin/lvp
-COPY --from=builder /app/vid /app/vid
+FROM rust:latest
 
-CMD ["/app/result/bin/lvp"]
+RUN apt-get update
 
+RUN apt-get install libavutil-dev libavformat-dev libavdevice-dev libswscale-dev libavcodec-dev -y
+
+RUN addgroup --gid 1000 lvp
+
+RUN adduser --disabled-login --shell /bin/sh --uid 1000 --ingroup lvp lvp
+
+WORKDIR /home/lvp/bin/
+
+COPY --from=cargo-build /usr/src/lvp/target/release/lvp .
+
+RUN chown lvp:lvp lvp
+
+USER lvp
+
+CMD ["./lvp"]
