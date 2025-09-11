@@ -17,12 +17,12 @@ async fn main() -> Result<(), Error> {
     let mut client = Client::new(&args).await?;
 
     loop {
-        let video = Video::from_directory(&mut rng, args.directory())?;
+        let video = Video::from_directory(&mut rng, args.directory(), client.dimensions())?;
         if let Err(why) = client.send(video, TEN_SECONDS).await {
             error!("error while sending video: {why}");
         }
-        let video = Video::load_static(args.directory())?;
-        if let Err(why) = client.send(video, ONE_SECOND).await {
+        let video = Video::load_static(args.directory(), client.dimensions())?;
+        if let Err(why) = client.send(video, TWO_SECONDS).await {
             error!("error while sending video: {why}");
         }
     }
@@ -40,7 +40,7 @@ fn log() -> Result<(), Error> {
 }
 
 /// How long the static plays.
-const ONE_SECOND: Duration = Duration::from_secs(1);
+const TWO_SECONDS: Duration = Duration::from_secs(2);
 
 /// How long the video plays.
 const TEN_SECONDS: Duration = Duration::from_secs(10);

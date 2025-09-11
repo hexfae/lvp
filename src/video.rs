@@ -7,6 +7,8 @@ use tracing::debug;
 use video_rs::{DecoderBuilder, Options, decode::Decoder};
 use walkdir::WalkDir;
 
+use crate::client::Dimensions;
+
 /// The filename of the static played between videos.
 const STATIC_VIDEO: &str = "static.mp4";
 
@@ -80,12 +82,19 @@ impl Video {
     /// # Errors
     ///
     /// Returns an error if a `static.mp4` file wasn't found in the given directory.
-    pub fn load_static(path: impl Into<PathBuf>) -> Result<Self, ProcessingError> {
+    pub fn load_static(
+        path: impl Into<PathBuf>,
+        dimensions: Dimensions,
+    ) -> Result<Self, ProcessingError> {
         let path = path.into().join(STATIC_VIDEO);
         let name = "static".to_owned();
         ensure!(path.exists(), NoStaticFoundSnafu { path });
         let decoder = DecoderBuilder::new(path)
             .with_options(&Options::preset_h264_realtime())
+            .with_resize(video_rs::Resize::Exact(
+                dimensions.video_width(),
+                dimensions.video_height(),
+            ))
             .build()
             .context(CreateDecoderSnafu)?;
         Ok(Self { decoder, name })
@@ -100,6 +109,7 @@ impl Video {
     pub fn from_directory(
         rng: &mut ThreadRng,
         path: impl Into<PathBuf>,
+        dimensions: Dimensions,
     ) -> Result<Self, ProcessingError> {
         let path = path.into();
         let path = WalkDir::new(&path)
@@ -113,6 +123,10 @@ impl Video {
             .into_path();
         let mut decoder = DecoderBuilder::new(&*path)
             .with_options(&Options::preset_h264_realtime())
+            .with_resize(video_rs::Resize::Exact(
+                dimensions.video_width(),
+                dimensions.video_height(),
+            ))
             .build()
             .context(CreateDecoderSnafu)?;
 
@@ -127,8 +141,9 @@ impl Video {
         let duration = decoder.duration().context(MetadataSnafu)?;
         #[expect(clippy::cast_possible_truncation)] // this does not matter
         let millis = (duration.as_secs() * TO_MILLI) as i64;
-        let timestamp = rng.random_range(0..millis.saturating_sub(TEN_SECONDS_IN_MILLISECONDS));
-        decoder.seek(timestamp).context(VideoSeekSnafu)?;
+        // TODO: fix this +2 workaround
+        // let timestamp = rng.random_range(0..millis.saturating_sub(TEN_SECONDS_IN_MILLISECONDS) + 2);
+        // decoder.seek(timestamp).context(VideoSeekSnafu)?;
 
         Ok(Self { decoder, name })
     }

@@ -23,6 +23,14 @@ pub struct Args {
     /// Use binary pixel commands (PB). Recommended if connecting to a pixelpwnr server.
     #[arg(short, long)]
     binary: bool,
+
+    /// The width the video should be resized to.
+    #[arg(short, long, default_value_t = 640)]
+    width: usize,
+
+    /// The height the video should be resized to.
+    #[arg(short, long, default_value_t = 360)]
+    height: usize,
 }
 
 impl Args {
