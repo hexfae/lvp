@@ -14,28 +14,32 @@ async fn main() -> Result<(), Error> {
 
     let args = Args::parse();
     let mut rng = rand::rng();
-    let mut client = Client::new(&args).await?;
     loop {
-        let video = match Video::from_directory(&mut rng, args.directory(), client.dimensions()) {
-            Ok(video) => video,
-            Err(why) => {
-                error!("error while selecting video: {why}");
-                continue;
+        let mut client = Client::new(&args).await?;
+        loop {
+            let video = match Video::from_directory(&mut rng, args.directory(), client.dimensions())
+            {
+                Ok(video) => video,
+                Err(why) => {
+                    error!("error while selecting video: {why}");
+                    break;
+                }
+            };
+            if let Err(why) = client.send(video, TEN_SECONDS).await {
+                error!("error while sending video: {why}");
+                break;
             }
-        };
-        if let Err(why) = client.send(video, TEN_SECONDS).await {
-            error!("error while sending video: {why}");
-            continue;
-        }
-        let video = match Video::load_static(args.directory(), client.dimensions()) {
-            Ok(video) => video,
-            Err(why) => {
-                error!("error while selecting static: {why}");
-                continue;
+            let video = match Video::load_static(args.directory(), client.dimensions()) {
+                Ok(video) => video,
+                Err(why) => {
+                    error!("error while selecting static: {why}");
+                    break;
+                }
+            };
+            if let Err(why) = client.send(video, TWO_SECONDS).await {
+                error!("error while sending video: {why}");
+                break;
             }
-        };
-        if let Err(why) = client.send(video, TWO_SECONDS).await {
-            error!("error while sending video: {why}");
         }
     }
 }

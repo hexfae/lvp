@@ -141,9 +141,12 @@ impl Video {
         let duration = decoder.duration().context(MetadataSnafu)?;
         #[expect(clippy::cast_possible_truncation)] // this does not matter
         let millis = (duration.as_secs() * TO_MILLI) as i64;
-        // TODO: fix this +2 workaround
-        // let timestamp = rng.random_range(0..millis.saturating_sub(TEN_SECONDS_IN_MILLISECONDS) + 2);
-        // decoder.seek(timestamp).context(VideoSeekSnafu)?;
+        let timestamp = rng.random_range(
+            0..millis
+                .saturating_sub(TEN_SECONDS_IN_MILLISECONDS)
+                .saturating_add(2),
+        );
+        decoder.seek(timestamp).context(VideoSeekSnafu)?;
 
         Ok(Self { decoder, name })
     }
