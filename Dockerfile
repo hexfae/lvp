@@ -26,7 +26,7 @@ FROM rust:latest
 
 RUN apt-get update
 
-RUN apt-get install libavutil-dev libavformat-dev libavdevice-dev libswscale-dev libavcodec-dev -y
+RUN apt-get install libavutil-dev libavformat-dev libavdevice-dev libswscale-dev libavcodec-dev rclone -y
 
 RUN addgroup --gid 1000 lvp
 
