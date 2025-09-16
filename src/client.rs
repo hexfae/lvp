@@ -78,7 +78,7 @@ pub enum ClientError {
     /// Sending a packet failed.
     ///
     /// Probably an invalid command was sent.
-    #[snafu(display("failed to send a packet to the server"))]
+    #[snafu(display("failed to send a packet to the server: {source}"))]
     SendPacket { source: std::io::Error },
 }
 
