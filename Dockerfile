@@ -28,20 +28,22 @@ RUN apt-get update
 
 RUN apt-get install libavutil-dev libavformat-dev libavdevice-dev libswscale-dev libavcodec-dev rclone -y
 
-RUN addgroup --gid 1000 lvp
+# RUN addgroup --gid 1000 lvp
 
-RUN adduser --disabled-login --shell /bin/sh --uid 1000 --ingroup lvp lvp
+# RUN adduser --disabled-login --shell /bin/sh --uid 1000 --ingroup lvp lvp
 
-WORKDIR /home/lvp/bin/
+# WORKDIR /home/lvp/bin/
+
+WORKDIR /root/bin
 
 COPY --from=cargo-build /usr/src/lvp/target/release/lvp .
 
-RUN mkdir /home/lvp/vid
+# RUN mkdir /home/lvp/vid
 
-RUN chown lvp:lvp /home/lvp/vid
+# RUN chown lvp:lvp /home/lvp/vid
 
-RUN chown lvp:lvp lvp
+# RUN chown lvp:lvp lvp
 
-USER lvp
+# USER lvp
 
 CMD ["./lvp"]
