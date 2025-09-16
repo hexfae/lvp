@@ -36,6 +36,10 @@ WORKDIR /home/lvp/bin/
 
 COPY --from=cargo-build /usr/src/lvp/target/release/lvp .
 
+RUN mkdir /home/lvp/vid
+
+RUN chown lvp:lvp /home/lvp/vid
+
 RUN chown lvp:lvp lvp
 
 USER lvp
