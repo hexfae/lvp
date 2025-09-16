@@ -14,19 +14,28 @@ async fn main() -> Result<(), Error> {
 
     let args = Args::parse();
     let mut rng = rand::rng();
+    let mut client = Client::new(&args).await?;
     loop {
-        let mut client = Client::new(&args).await?;
-
-        loop {
-            let video = Video::from_directory(&mut rng, args.directory(), client.dimensions())?;
-            if let Err(why) = client.send(video, TEN_SECONDS).await {
-                error!("error while sending video: {why}");
-                break;
+        let video = match Video::from_directory(&mut rng, args.directory(), client.dimensions()) {
+            Ok(video) => video,
+            Err(why) => {
+                error!("error while selecting video: {why}");
+                continue;
             }
-            let video = Video::load_static(args.directory(), client.dimensions())?;
-            if let Err(why) = client.send(video, TWO_SECONDS).await {
-                error!("error while sending video: {why}");
+        };
+        if let Err(why) = client.send(video, TEN_SECONDS).await {
+            error!("error while sending video: {why}");
+            continue;
+        }
+        let video = match Video::load_static(args.directory(), client.dimensions()) {
+            Ok(video) => video,
+            Err(why) => {
+                error!("error while selecting static: {why}");
+                continue;
             }
+        };
+        if let Err(why) = client.send(video, TWO_SECONDS).await {
+            error!("error while sending video: {why}");
         }
     }
 }
