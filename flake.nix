@@ -29,7 +29,8 @@
         commonArgs = {
           src = craneLib.cleanCargoSource ./.;
           strictDeps = true;
-          nativeBuildInputs = with pkgs; [clang mold];
+          nativeBuildInputs = with pkgs; [clang mold pkg-config];
+          buildInputs = with pkgs; [ffmpeg-headless libclang];
         };
 
         lvp = craneLib.buildPackage (
@@ -51,6 +52,7 @@
 
         devShells.default = craneLib.devShell {
           checks = self.checks.${system};
+          LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath commonArgs.buildInputs;
         };
       }
     );

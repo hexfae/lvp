@@ -1,12 +1,17 @@
 //! LVP: pixeLflut Video Processor.
 
 mod client;
+mod decoder;
+mod frame;
 mod video;
 
 use client::Client;
 use snafu::Snafu;
 
-use crate::client::{BucketNameUnsetError, ListVideosError, SelectVideoError};
+use crate::{
+    client::{BucketNameUnsetError, ListVideosError, SelectVideoError},
+    decoder::{DecodeError, Decoder},
+};
 
 #[tokio::main]
 #[snafu::report]
@@ -15,10 +20,17 @@ async fn main() -> Result<(), Error> {
 
     let videos = client.list_videos().await?;
 
-    if let Some(first) = videos.first() {
-        let video = client.select_video(first).await?;
-        println!("{}: {} bytes", first, video.bytes().len());
-    }
+    let Some(first) = videos.first() else {
+        return Ok(());
+    };
+
+    let video = client.select_video(first).await?;
+    let mut decoder = Decoder::new(video.bytes())?;
+    let Some(frame) = decoder.next() else {
+        return Ok(());
+    };
+
+    println!("pixels: {}", frame.len());
 
     Ok(())
 }
@@ -45,5 +57,11 @@ enum Error {
         /// See [`SelectVideoError`].
         #[snafu(source(from(SelectVideoError, Box::new)))]
         source: Box<SelectVideoError>,
+    },
+    /// See [`DecodeError`].
+    #[snafu(transparent)]
+    Decoder {
+        /// See [`DecodeError`].
+        source: DecodeError,
     },
 }

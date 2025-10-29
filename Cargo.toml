@@ -1,13 +1,15 @@
 [package]
 name = "lvp"
-version = "0.0.2"
+version = "0.0.3"
 edition = "2024"
 
 [dependencies]
 aws-config = { version = "1.8.8", features = ["behavior-version-latest"] }
 aws-sdk-s3 = { version = "1.109.0", features = ["behavior-version-latest"] }
 snafu = "0.8.9"
+tempfile = "3.23.0"
 tokio = { version = "1.48.0", features = ["macros", "rt-multi-thread"] }
+video-rs = { version = "0.10.5", features = ["ndarray"] }
 
 [lints.rust]
 unsafe_code = "forbid"
