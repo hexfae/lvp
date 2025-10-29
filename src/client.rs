@@ -52,7 +52,9 @@ pub struct Client {
 
 #[derive(Clone, Copy)]
 pub struct Dimensions {
+    /// The desired width of the video.
     width: usize,
+    /// The desired height of the video.
     height: usize,
 }
 

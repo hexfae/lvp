@@ -1,6 +1,6 @@
 //! Process a video from a path into a [`Video`].
 
-use rand::{Rng, rngs::ThreadRng, seq::IteratorRandom};
+use rand::{rngs::ThreadRng, seq::IteratorRandom};
 use snafu::{OptionExt, ResultExt, Snafu, ensure};
 use std::path::PathBuf;
 use tracing::debug;
@@ -11,14 +11,6 @@ use crate::client::Dimensions;
 
 /// The filename of the static played between videos.
 const STATIC_VIDEO: &str = "static.mp4";
-
-/// Ten seconds in milliseconds.
-///
-/// This ensures that videos won't have their random timestamp be right at the end and immediately end.
-const TEN_SECONDS_IN_MILLISECONDS: i64 = 10 * 1000;
-
-/// What to multiply seconds with to get milliseconds.
-const TO_MILLI: f32 = 1000.0;
 
 /// A look-up-table for the reduced color "resolution" of videos.
 const LUT: [u8; 256] = {
@@ -105,7 +97,7 @@ impl Video {
     /// # Errors
     ///
     /// Returns an error if no video was found, a decoder could not be built,
-    /// the metadata is corrupted, or it attempted to seek to an invalid point.
+    /// or the metadata is corrupted.
     pub fn from_directory(
         rng: &mut ThreadRng,
         path: impl Into<PathBuf>,
@@ -121,7 +113,7 @@ impl Video {
             .choose(rng)
             .context(NoVideoFoundSnafu { path })?
             .into_path();
-        let mut decoder = DecoderBuilder::new(&*path)
+        let decoder = DecoderBuilder::new(&*path)
             .with_options(&Options::preset_h264_realtime())
             .with_resize(video_rs::Resize::Exact(
                 dimensions.video_width(),
@@ -138,15 +130,6 @@ impl Video {
             .to_string();
 
         debug!("loaded {name} ({frame_rate}fps)",);
-        let duration = decoder.duration().context(MetadataSnafu)?;
-        #[expect(clippy::cast_possible_truncation)] // this does not matter
-        let millis = (duration.as_secs() * TO_MILLI) as i64;
-        let timestamp = rng.random_range(
-            0..millis
-                .saturating_sub(TEN_SECONDS_IN_MILLISECONDS)
-                .saturating_add(2),
-        );
-        decoder.seek(timestamp).context(VideoSeekSnafu)?;
 
         Ok(Self { decoder, name })
     }

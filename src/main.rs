@@ -25,21 +25,22 @@ async fn main() -> Result<(), Error> {
                     break;
                 }
             };
-            if let Err(why) = client.send(video, TEN_SECONDS).await {
+            // TODO: remove the "play for x seconds" logic entirely
+            if let Err(why) = client.send(video, Duration::MAX).await {
                 error!("error while sending video: {why}");
                 break;
             }
-            let video = match Video::load_static(args.directory(), client.dimensions()) {
-                Ok(video) => video,
-                Err(why) => {
-                    error!("error while selecting static: {why}");
-                    break;
-                }
-            };
-            if let Err(why) = client.send(video, TWO_SECONDS).await {
-                error!("error while sending video: {why}");
-                break;
-            }
+            // let video = match Video::load_static(args.directory(), client.dimensions()) {
+            //     Ok(video) => video,
+            //     Err(why) => {
+            //         error!("error while selecting static: {why}");
+            //         break;
+            //     }
+            // };
+            // if let Err(why) = client.send(video, TWO_SECONDS).await {
+            //     error!("error while sending video: {why}");
+            //     break;
+            // }
         }
     }
 }
@@ -54,12 +55,6 @@ fn log() -> Result<(), Error> {
     tracing_subscriber::fmt().with_env_filter(filter).init();
     Ok(())
 }
-
-/// How long the static plays.
-const TWO_SECONDS: Duration = Duration::from_secs(2);
-
-/// How long the video plays.
-const TEN_SECONDS: Duration = Duration::from_secs(10);
 
 /// All of the errors that can occur during video playback.
 #[derive(Debug, snafu::Snafu)]
