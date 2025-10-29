@@ -1,251 +1,87 @@
-//! The client responsible for sending TCP packets to the pixelflut (pixelpwnr) server.
-use crate::{Args, video::Video};
-use hex::encode_to_slice;
-use itoa::Buffer;
-use snafu::{ResultExt, Snafu};
-use std::time::Duration;
-use tokio::{
-    io::AsyncWriteExt,
-    net::TcpStream,
-    sync::mpsc::{Sender, channel},
-    time::{MissedTickBehavior, interval, timeout},
+//! The client struct responsible for interacting with the S3 bucket.
+
+use std::{
+    env::{VarError, var},
+    fmt::Display,
 };
 
-/// The pixel binary command as specified by [pixelpwnr](https://github.com/timvisee/pixelpwnr-server).
-const PB: &[u8; 2] = b"PB";
+use aws_sdk_s3::{error::SdkError, operation::list_objects_v2::ListObjectsV2Error};
+use snafu::{ResultExt, Snafu};
 
-/// A fully opaque pixel, alpha 255.
-const OPAQUE: u8 = u8::MAX;
-
-/// The width of the resolution of the LUDD TV.
-const CANVAS_WIDTH: usize = 1920;
-
-/// The height of the resolution of the LUDD TV.
-const CANVAS_HEIGHT: usize = 1080;
-
-/// The amount of bytes per pixel in RGB24 (R, G, B);
-const BYTES_PER_PIXEL: usize = 3;
-
-/// The (expected) max amount of bytes per PX command.
-///
-/// 3 for `PX` and a space, 5 for the x position (xxxx) and a space, 5 for the y position
-/// (yyyy) and a space, and 7 for RR/GG/BB and a newline.
-const MAX_BYTES_PER_TEXT_COMMAND: usize = 20;
-
-/// The amount of bytes per PB command (for
-/// [pixelpwnr-server](github.com/timvisee/pixelpwnr-server)).
-///
-/// 2 for `PB`, 2 for the x position, 2 for the y position, 4 for R/G/B/A.
-const BYTES_PER_BINARY_COMMAND: usize = 10;
-
-/// The client responsible for sending TCP packets to a server.
+/// A wrapper around the S3 client.
 pub struct Client {
-    /// The TCP stream to send frames to.
-    stream: TcpStream,
-    /// Whether to use binary commands, for pixelpwnr servers.
-    binary: bool,
-    /// The dimensions of the video and the server's canvas.
-    dimensions: Dimensions,
-    /// A cache of the previous frame's pixels, to only send changed pixels.
-    pixel_cache: Vec<u8>,
+    /// The S3 client.
+    client: aws_sdk_s3::Client,
+    /// The name of the S3 bucket containing videos.
+    bucket_name: String,
 }
 
-#[derive(Clone, Copy)]
-pub struct Dimensions {
-    /// The desired width of the video.
-    width: usize,
-    /// The desired height of the video.
-    height: usize,
-}
+/// The name of a video.
+pub struct VideoName(String);
 
-/// All errors that can occur while sending a video.
+/// The `S3_BUCKET_NAME` environment variable is not set.
 #[derive(Debug, Snafu)]
-pub enum ClientError {
-    /// Failed to join the producer task while processing a video.
-    ///
-    /// Some other error occured for the client.
-    #[snafu(display("failed to join producer task: {source}"))]
-    JoinError { source: tokio::task::JoinError },
-    /// Creating the connection failed.
-    ///
-    /// Probably the address was incorrect (or is not hosting pixelflut).
-    #[snafu(display("could not create tcp connection to {address} because: {source}"))]
-    CreateConnection {
-        source: std::io::Error,
-        address: String,
-    },
-    /// Setting `TCP_NODELAY` on the TCP socket failed.
-    #[snafu(display("setting TCP_NODELAY failed: {source}"))]
-    SetNoDelay { source: std::io::Error },
-    /// Sending a packet failed.
-    ///
-    /// Probably an invalid command was sent.
-    #[snafu(display("failed to send a packet to the server: {source}"))]
-    SendPacket { source: std::io::Error },
+#[snafu(display("S3_BUCKET_NAME environment variable is not set"))]
+pub struct BucketNameUnsetError {
+    /// The source of the error.
+    source: VarError,
+}
+
+/// An error occurred while listing videos.
+#[derive(Debug, Snafu)]
+#[snafu(transparent)]
+pub struct ListVideosError {
+    /// The source of the error.
+    source: SdkError<ListObjectsV2Error>,
 }
 
 impl Client {
-    /// Create a new [`Client`].
+    /// Creates a new client.
     ///
     /// # Errors
     ///
-    /// Returns an error if a video could not be loaded (see [`Video::from_directory`]
-    /// or a TCP stream could not be created.
-    pub async fn new(args: &Args) -> Result<Self, ClientError> {
-        let address = &args.address;
-        let stream = TcpStream::connect(address)
-            .await
-            .context(CreateConnectionSnafu { address })?;
-        stream.set_nodelay(true).context(SetNoDelaySnafu)?;
-        let binary = args.binary;
-        let dimensions = Dimensions {
-            width: args.width,
-            height: args.height,
-        };
-        let pixel_cache = vec![0; dimensions.width * dimensions.height * BYTES_PER_PIXEL];
+    /// This function will return an error if the `S3_BUCKET_NAME` environment variable is not set.
+    pub async fn new() -> Result<Self, BucketNameUnsetError> {
+        let sdk_config = aws_config::load_from_env().await;
+        let config = aws_sdk_s3::config::Builder::from(&sdk_config)
+            .force_path_style(true)
+            .build();
+        let client = aws_sdk_s3::Client::from_conf(config);
+
+        let bucket_name = var("S3_BUCKET_NAME").context(BucketNameUnsetSnafu)?;
 
         Ok(Self {
-            stream,
-            binary,
-            dimensions,
-            pixel_cache,
+            client,
+            bucket_name,
         })
     }
 
-    /// Send TCP packets to the set address of the frames of the video.
+    /// Returns a list of video names. Returns an empty list if no videos are found.
     ///
     /// # Errors
     ///
-    /// Returns an error if a packet failed to send.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the hex buffer was too small (which it should never be, since it should always be 6).
-    pub async fn send(&mut self, video: Video, play_for: Duration) -> Result<(), ClientError> {
-        let (tx, mut rx) = channel::<Vec<u8>>(2);
-        let binary = self.binary;
-        let pixel_cache = std::mem::take(&mut self.pixel_cache);
-        let dimensions = self.dimensions;
+    /// This function will return an error if the S3 API call fails.
+    pub async fn list_videos(&self) -> Result<Vec<VideoName>, ListVideosError> {
+        let resp = self
+            .client
+            .list_objects_v2()
+            .bucket(&self.bucket_name)
+            .send()
+            .await?;
 
-        let producer_handle = tokio::spawn(Self::frame_producer(
-            video,
-            binary,
-            pixel_cache,
-            tx,
-            dimensions,
-        ));
+        let names = resp
+            .contents()
+            .to_owned()
+            .into_iter()
+            .filter_map(|obj| obj.key.map(VideoName))
+            .collect();
 
-        if let Ok(Err(why)) = timeout(play_for, async {
-            while let Some(buffer) = rx.recv().await {
-                self.stream
-                    .write_all(&buffer)
-                    .await
-                    .context(SendPacketSnafu)?;
-            }
-            Ok(())
-        })
-        .await
-        {
-            return Err(why);
-        }
-
-        drop(rx);
-        self.pixel_cache = producer_handle.await.context(JoinSnafu)?;
-        Ok(())
-    }
-
-    /// Produces frames to be sent to the server.
-    async fn frame_producer(
-        video: Video,
-        binary: bool,
-        mut pixel_cache: Vec<u8>,
-        tx: Sender<Vec<u8>>,
-        dimensions: Dimensions,
-    ) -> Vec<u8> {
-        let frame_duration = Duration::from_secs_f32(1.0 / video.frame_rate());
-        let mut command_buffer = if binary {
-            Vec::with_capacity(dimensions.width * dimensions.height * BYTES_PER_BINARY_COMMAND)
-        } else {
-            Vec::with_capacity(dimensions.width * dimensions.height * MAX_BYTES_PER_TEXT_COMMAND)
-        };
-        let mut buffer = Buffer::new();
-        let mut ticker = interval(frame_duration);
-        ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
-
-        for result in video {
-            ticker.tick().await;
-
-            let Ok(frame_pixels) = result else {
-                break;
-            };
-
-            let new_pixels = frame_pixels.chunks_exact(BYTES_PER_PIXEL);
-            let cached_pixels = pixel_cache.chunks_exact_mut(BYTES_PER_PIXEL);
-
-            for (index, (new_pixel, cached_pixel)) in new_pixels.zip(cached_pixels).enumerate() {
-                if new_pixel != cached_pixel {
-                    let (x, y) = bottom_right_coordinates(index, dimensions);
-
-                    if binary {
-                        command_buffer.extend_from_slice(PB);
-                        command_buffer.extend_from_slice(&x.to_le_bytes());
-                        command_buffer.extend_from_slice(&y.to_le_bytes());
-                        command_buffer.extend_from_slice(new_pixel);
-                        command_buffer.push(OPAQUE);
-                    } else {
-                        command_buffer.extend_from_slice(b"PX ");
-                        command_buffer.extend_from_slice(buffer.format(x).as_bytes());
-                        command_buffer.push(b' ');
-                        command_buffer.extend_from_slice(buffer.format(y).as_bytes());
-                        command_buffer.push(b' ');
-
-                        let mut hex_buf = [0u8; 6];
-                        encode_to_slice(new_pixel, &mut hex_buf).expect("hex buffer was too small");
-                        command_buffer.extend_from_slice(&hex_buf);
-                        command_buffer.push(b'\n');
-                    }
-
-                    cached_pixel.copy_from_slice(new_pixel);
-                }
-            }
-
-            if command_buffer.is_empty() {
-                continue;
-            }
-
-            if tx.send(std::mem::take(&mut command_buffer)).await.is_err() {
-                break;
-            }
-        }
-        pixel_cache
-    }
-
-    pub const fn dimensions(&self) -> Dimensions {
-        self.dimensions
+        Ok(names)
     }
 }
 
-impl Dimensions {
-    #[must_use]
-    #[allow(clippy::cast_possible_truncation)] // no video will be that big
-    pub const fn video_width(&self) -> u32 {
-        self.width as u32
+impl Display for VideoName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
     }
-
-    #[must_use]
-    #[allow(clippy::cast_possible_truncation)] // no video will be that big
-    pub const fn video_height(&self) -> u32 {
-        self.height as u32
-    }
-}
-
-/// Calculates the x and y coordinates to anchor a video to the bottom right corner.
-#[expect(clippy::cast_possible_truncation)] // this is fine, ludd's tv is 1920x1080
-const fn bottom_right_coordinates(index: usize, dimensions: Dimensions) -> (u16, u16) {
-    let (video_width, video_height) = (dimensions.width, dimensions.height);
-    let video_x = index % video_width;
-    let video_y = index / video_width;
-    let start_x = CANVAS_WIDTH.saturating_sub(video_width);
-    let start_y = CANVAS_HEIGHT.saturating_sub(video_height);
-    ((start_x + video_x) as u16, (start_y + video_y) as u16)
 }

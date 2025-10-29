@@ -1,58 +1,56 @@
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
-    naersk.url = "github:nix-community/naersk";
-    flake-utils.url = "github:numtide/flake-utils";
+    crane.url = "github:ipetkov/crane";
     rust-overlay.url = "github:oxalica/rust-overlay";
-    rust-overlay.inputs.nixpkgs.follows = "nixpkgs";
+    flake-utils.url = "github:numtide/flake-utils";
   };
 
   outputs = {
     self,
     nixpkgs,
-    naersk,
-    flake-utils,
+    crane,
     rust-overlay,
-  } @ inputs:
+    flake-utils,
+    ...
+  }:
     flake-utils.lib.eachDefaultSystem (
       system: let
-        overlays = [(import rust-overlay)];
-        pkgs = (import nixpkgs) {
-          inherit system overlays;
-        };
-        rust-nightly =
-          pkgs.rust-bin.selectLatestNightlyWith
-          (toolchain:
-            toolchain.default.override {
-              extensions = ["rust-src" "rust-analyzer" "rustc-codegen-cranelift-preview"];
-            });
-        naersk = inputs.naersk.lib.${system}.override {
-          cargo = rust-nightly;
-          rustc = rust-nightly;
-        };
-        buildInputs = with pkgs; [
-          ffmpeg-headless
-          libclang
-        ];
-        nativeBuildInputs = with pkgs; [
-          mold
-          clang
-          rust-nightly
-          pkg-config
-        ];
-        LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath buildInputs;
-      in {
-        defaultPackage = naersk.buildPackage {
-          inherit buildInputs;
-          inherit nativeBuildInputs;
-          inherit LD_LIBRARY_PATH;
-          src = ./.;
+        overlays = [rust-overlay.overlays.default];
+        pkgs = import nixpkgs {inherit system overlays;};
+
+        toolchain = pkgs.rust-bin.selectLatestNightlyWith (toolchain:
+          toolchain.default.override {
+            extensions = ["rust-src" "rust-analyzer" "rustc-codegen-cranelift-preview"];
+          });
+
+        craneLib = (crane.mkLib pkgs).overrideToolchain toolchain;
+
+        commonArgs = {
+          src = craneLib.cleanCargoSource ./.;
+          strictDeps = true;
+          nativeBuildInputs = with pkgs; [clang mold];
         };
 
-        devShell = pkgs.mkShell {
-          inherit buildInputs;
-          inherit nativeBuildInputs;
-          inherit LD_LIBRARY_PATH;
+        lvp = craneLib.buildPackage (
+          commonArgs
+          // {
+            cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+          }
+        );
+      in {
+        checks = {
+          my-crate = lvp;
+        };
+
+        packages.default = lvp;
+
+        apps.default = flake-utils.lib.mkApp {
+          drv = lvp;
+        };
+
+        devShells.default = craneLib.devShell {
+          checks = self.checks.${system};
         };
       }
     );
