@@ -60,6 +60,11 @@ pub enum DecodeError {
 }
 
 impl Video {
+    /// Returns the width of the video.
+    pub fn width(&self) -> u32 {
+        self.decoder.size().0
+    }
+
     /// Creates a new video from an S3 object.
     pub async fn from_object(object: GetObjectOutput) -> Result<Self, ReadVideoError> {
         let mut bytes = vec![];

@@ -64,9 +64,9 @@ impl Network {
     /// # Errors
     ///
     /// Returns an error if writing to the TCP connection fails.
-    pub async fn send_pixels(&mut self, frame: Frame) -> Result<(), NetworkError> {
+    pub async fn send_pixels(&mut self, frame: Frame, width: u32) -> Result<(), NetworkError> {
         self.stream
-            .write_all(&frame.to_command())
+            .write_all(&frame.to_command(width))
             .await
             .with_context(|_| TcpWriteSnafu {
                 addr: self.addr.clone(),

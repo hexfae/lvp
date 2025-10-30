@@ -13,6 +13,7 @@ use snafu::Snafu;
 #[snafu::report]
 async fn main() -> Result<(), Error> {
     let client = Client::new().await?;
+    let mut network = Network::new().await?;
 
     let videos = client.list_videos().await?;
 
@@ -21,10 +22,10 @@ async fn main() -> Result<(), Error> {
     };
 
     let video = client.select_video(first).await?;
+    let width = video.width();
 
-    let mut network = Network::new().await?;
     for frame in video {
-        network.send_pixels(frame).await?;
+        network.send_pixels(frame, width).await?;
     }
 
     Ok(())

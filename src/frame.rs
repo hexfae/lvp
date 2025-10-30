@@ -31,15 +31,18 @@ impl Frame {
     /// PX command.
     // videos are not expected to be larger than 65535x65535 pixels
     #[expect(clippy::cast_possible_truncation)]
-    pub fn to_command(&self) -> Vec<u8> {
+    pub fn to_command(&self, width: u32) -> Vec<u8> {
         let mut command = vec![];
         for (index, pixel) in self.pixels.iter().enumerate() {
-            let x = ((index % 720) as u16).to_le_bytes();
-            let y = ((index / 720) as u16).to_le_bytes();
+            // the reason why we cast the products as u16 is because
+            // pixelpwnr-server's binary PX command expects u16 coordinates
+            let index = index as u32;
+            let x = (index % width) as u16;
+            let y = (index / width) as u16;
             command.extend(b"PB");
-            command.extend(&x);
-            command.extend(&y);
-            command.extend(&[pixel.0.0, pixel.1.0, pixel.2.0, u8::MAX]);
+            command.extend(&x.to_le_bytes());
+            command.extend(&y.to_le_bytes());
+            command.extend(pixel);
         }
         command
     }
@@ -49,6 +52,15 @@ impl Pixel {
     /// Create a new pixel with the given red, green, and blue components.
     pub const fn new(red: u8, green: u8, blue: u8) -> Self {
         Self(Red(red), Green(green), Blue(blue))
+    }
+}
+
+impl IntoIterator for &Pixel {
+    type Item = u8;
+    type IntoIter = std::array::IntoIter<u8, 4>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        [self.0.0, self.1.0, self.2.0, u8::MAX].into_iter()
     }
 }
 
