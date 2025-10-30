@@ -8,7 +8,7 @@ use aws_sdk_s3::{
 };
 use snafu::{ResultExt, Snafu};
 
-use crate::video::{ReadVideoError, Video, VideoName};
+use crate::video::{ReadVideoError, Video};
 
 /// A wrapper around the S3 client.
 pub struct Client {
@@ -17,6 +17,9 @@ pub struct Client {
     /// The name of the S3 bucket containing videos.
     bucket_name: String,
 }
+
+/// The name of a video.
+pub struct VideoName(String);
 
 /// The `S3_BUCKET_NAME` environment variable is not set.
 #[derive(Debug, Snafu)]
@@ -113,5 +116,17 @@ impl Client {
         let video = Video::from_object(object).await?;
 
         Ok(video)
+    }
+}
+
+impl From<String> for VideoName {
+    fn from(name: String) -> Self {
+        Self(name)
+    }
+}
+
+impl From<&VideoName> for String {
+    fn from(video: &VideoName) -> Self {
+        video.0.clone()
     }
 }

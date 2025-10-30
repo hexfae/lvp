@@ -1440,10 +1440,11 @@ dependencies = [
 
 [[package]]
 name = "lvp"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "aws-config",
  "aws-sdk-s3",
+ "ndarray",
  "snafu",
  "tempfile",
  "tokio",
