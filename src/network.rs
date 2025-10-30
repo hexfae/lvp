@@ -5,7 +5,7 @@ use std::env::{VarError, var};
 use snafu::{ResultExt, Snafu};
 use tokio::{io::AsyncWriteExt, net::TcpStream};
 
-use crate::frame::Frame;
+use crate::{frame::Frame, video::Video};
 
 /// A wrapper around a TCP stream.
 pub struct Network {
@@ -59,12 +59,20 @@ impl Network {
         Ok(Self { stream, addr })
     }
 
+    pub async fn send_video(&mut self, video: Video) -> Result<(), NetworkError> {
+        let width = video.width();
+        for frame in video {
+            self.send_frame(frame, width).await?;
+        }
+        Ok(())
+    }
+
     /// Sends a frame to the pixelflut server.
     ///
     /// # Errors
     ///
     /// Returns an error if writing to the TCP connection fails.
-    pub async fn send_pixels(&mut self, frame: Frame, width: u32) -> Result<(), NetworkError> {
+    pub async fn send_frame(&mut self, frame: Frame, width: u32) -> Result<(), NetworkError> {
         self.stream
             .write_all(&frame.to_command(width))
             .await
