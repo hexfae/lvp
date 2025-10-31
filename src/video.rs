@@ -60,11 +60,6 @@ pub enum DecodeError {
 }
 
 impl Video {
-    /// Returns the width of the video.
-    pub fn width(&self) -> u32 {
-        self.decoder.size().0
-    }
-
     /// Creates a new video from an S3 object.
     pub async fn from_object(object: GetObjectOutput) -> Result<Self, ReadVideoError> {
         let mut bytes = vec![];
@@ -89,6 +84,16 @@ impl Video {
             .context(WriteTempFileSnafu { path })?;
         let decoder = video_rs::Decoder::new(path).context(CreateDecoderSnafu { path })?;
         Ok(Self { decoder })
+    }
+
+    /// Returns the width of the video.
+    pub fn width(&self) -> u32 {
+        self.decoder.size().0
+    }
+
+    /// Returns the frame rate of the video.
+    pub fn frame_rate(&self) -> f32 {
+        self.decoder.frame_rate()
     }
 }
 

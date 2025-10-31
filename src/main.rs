@@ -13,11 +13,14 @@ use snafu::Snafu;
 #[snafu::report]
 async fn main() -> Result<(), Error> {
     let client = Client::new().await?;
-    let mut network = Network::new().await?;
 
-    let video = client.random_video().await?;
-
-    network.send_video(video).await?;
+    loop {
+        let mut network = Network::new().await?;
+        let video = client.random_video().await?;
+        if let Err(why) = network.send_video(video).await {
+            eprintln!("Error sending video: {}", why);
+        }
+    }
 
     Ok(())
 }

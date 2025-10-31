@@ -1,9 +1,16 @@
 //! The client struct responsible for sending pixels to the server.
 
-use std::env::{VarError, var};
+use std::{
+    env::{VarError, var},
+    time::Duration,
+};
 
 use snafu::{ResultExt, Snafu};
-use tokio::{io::AsyncWriteExt, net::TcpStream};
+use tokio::{
+    io::AsyncWriteExt,
+    net::TcpStream,
+    time::{MissedTickBehavior, interval},
+};
 
 use crate::{frame::Frame, video::Video};
 
@@ -61,7 +68,13 @@ impl Network {
 
     pub async fn send_video(&mut self, video: Video) -> Result<(), NetworkError> {
         let width = video.width();
+        let frame_duration = Duration::from_secs_f32(1.0 / video.frame_rate());
+
+        let mut ticker = interval(frame_duration);
+        ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+
         for frame in video {
+            ticker.tick().await;
             self.send_frame(frame, width).await?;
         }
         Ok(())
