@@ -10,19 +10,19 @@ pub struct Frame {
 }
 
 /// A single pixel of a frame.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Pixel(Red, Green, Blue);
 
 /// A single red component of a pixel.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct Red(u8);
 
 /// A single green component of a pixel.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct Green(u8);
 
 /// A single blue component of a pixel.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct Blue(u8);
 
 impl Frame {
@@ -31,21 +31,36 @@ impl Frame {
     /// PX command.
     // videos are not expected to be larger than 65535x65535 pixels
     #[expect(clippy::cast_possible_truncation)]
-    pub fn to_command(&self, width: u32) -> Vec<u8> {
-        let mut command = vec![];
+    pub fn fill_command_buffer(
+        &self,
+        command_buffer: &mut Vec<u8>,
+        previous_frame: Option<&Frame>,
+        width: u32,
+    ) {
+        command_buffer.clear();
+        command_buffer.reserve(self.pixels.len());
         for (index, pixel) in self.pixels.iter().enumerate() {
-            // the reason why we cast the products as u16 is because
-            // pixelpwnr-server's binary PX command expects u16 coordinates
-            let index = index as u32;
-            let x = (index % width) as u16;
-            let y = (index / width) as u16;
-            command.extend(b"PB");
-            command.extend(&x.to_le_bytes());
-            command.extend(&y.to_le_bytes());
-            command.extend(pixel);
+            if previous_frame.is_some_and(|previous| previous.pixels[index] == *pixel) {
+                continue;
+            }
+            let part = to_binary_command(index, width, pixel);
+            command_buffer.extend(part);
         }
-        command
     }
+}
+
+fn to_binary_command(index: usize, width: u32, pixel: &Pixel) -> Vec<u8> {
+    let mut command = Vec::with_capacity(10);
+    let index = index as u32;
+    // the reason why we cast the products as u16 is because
+    // pixelpwnr-server's binary PX command expects u16 coordinates
+    let x = (index % width) as u16;
+    let y = (index / width) as u16;
+    command.extend(b"PB");
+    command.extend(&x.to_le_bytes());
+    command.extend(&y.to_le_bytes());
+    command.extend(pixel);
+    command
 }
 
 impl Pixel {

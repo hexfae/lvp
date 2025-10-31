@@ -21,8 +21,6 @@ async fn main() -> Result<(), Error> {
             eprintln!("Error sending video: {}", why);
         }
     }
-
-    Ok(())
 }
 
 /// Errors that can occur when using the LVP client.

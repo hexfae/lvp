@@ -20,6 +20,10 @@ pub struct Network {
     stream: TcpStream,
     /// The pixelflut server address.
     addr: String,
+    /// The previous frame sent to the server, used for caching.
+    previous_frame: Option<Frame>,
+    /// The command buffer used to build the command.
+    command_buffer: Vec<u8>,
 }
 
 /// A network-related error occured.
@@ -62,8 +66,15 @@ impl Network {
         let stream = TcpStream::connect(&addr)
             .await
             .with_context(|_| TcpConnectSnafu { addr: addr.clone() })?;
+        let previous_frame = None;
+        let command_buffer = Vec::new();
 
-        Ok(Self { stream, addr })
+        Ok(Self {
+            stream,
+            addr,
+            previous_frame,
+            command_buffer,
+        })
     }
 
     pub async fn send_video(&mut self, video: Video) -> Result<(), NetworkError> {
@@ -75,8 +86,10 @@ impl Network {
 
         for frame in video {
             ticker.tick().await;
-            self.send_frame(frame, width).await?;
+            self.send_frame(&frame, width).await?;
+            self.previous_frame = Some(frame);
         }
+        self.previous_frame = None;
         Ok(())
     }
 
@@ -85,9 +98,14 @@ impl Network {
     /// # Errors
     ///
     /// Returns an error if writing to the TCP connection fails.
-    pub async fn send_frame(&mut self, frame: Frame, width: u32) -> Result<(), NetworkError> {
+    pub async fn send_frame(&mut self, frame: &Frame, width: u32) -> Result<(), NetworkError> {
+        frame.fill_command_buffer(
+            &mut self.command_buffer,
+            self.previous_frame.as_ref(),
+            width,
+        );
         self.stream
-            .write_all(&frame.to_command(width))
+            .write_all(&self.command_buffer)
             .await
             .with_context(|_| TcpWriteSnafu {
                 addr: self.addr.clone(),
