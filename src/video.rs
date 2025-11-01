@@ -4,7 +4,7 @@ use aws_sdk_s3::operation::get_object::GetObjectOutput;
 use snafu::{ResultExt, Snafu};
 use std::io::{self, Write};
 use tempfile::NamedTempFile;
-use tokio::io::AsyncReadExt;
+use tokio::{fs::File, io::AsyncReadExt, task::spawn_blocking};
 use video_rs::Decoder;
 
 use crate::frame::{Frame, Pixel};
@@ -62,27 +62,25 @@ pub enum DecodeError {
 impl Video {
     /// Creates a new video from an S3 object.
     pub async fn from_object(object: GetObjectOutput) -> Result<Self, ReadVideoError> {
-        let mut bytes = vec![];
-        object
-            .body
-            .into_async_read()
-            .read_to_end(&mut bytes)
-            .await?;
-        let video = Self::decoder_from(&bytes)?;
-        Ok(video)
-    }
+        // video-rs requires a path (or url) to decode from
+        let tmp_file = NamedTempFile::new().unwrap();
+        let path = tmp_file.path().to_owned();
 
-    /// Create a new decoder from a byte slice.
-    fn decoder_from(bytes: &[u8]) -> Result<Self, DecodeError> {
-        // creating a temporary file is necessary because `video-rs`
-        // requires a file path (or a URL) to load a video from
-        let tmp_file = NamedTempFile::new().context(CreateTempFileSnafu)?;
-        let path = tmp_file.path();
-        tmp_file
-            .as_file()
-            .write_all(bytes)
-            .context(WriteTempFileSnafu { path })?;
-        let decoder = video_rs::Decoder::new(path).context(CreateDecoderSnafu { path })?;
+        let mut file = File::create(&path)
+            .await
+            .context(WriteTempFileSnafu { path: path.clone() })?;
+        let mut body = object.body.into_async_read();
+        tokio::io::copy(&mut body, &mut file)
+            .await
+            .context(WriteTempFileSnafu { path: path.clone() })?;
+
+        drop(file);
+
+        let decoder =
+            spawn_blocking(move || Decoder::new(path.clone()).context(CreateDecoderSnafu { path }))
+                .await
+                .expect("tokio join error")?;
+
         Ok(Self { decoder })
     }
 

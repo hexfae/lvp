@@ -6,7 +6,8 @@ use aws_sdk_s3::{
     error::SdkError,
     operation::{get_object::GetObjectError, list_objects_v2::ListObjectsV2Error},
 };
-use snafu::{ResultExt, Snafu};
+use rand::{rng, seq::IndexedRandom};
+use snafu::{OptionExt, ResultExt, Snafu};
 
 use crate::video::{ReadVideoError, Video};
 
@@ -35,6 +36,9 @@ pub enum ClientError {
         /// The source of the error.
         source: SdkError<ListObjectsV2Error>,
     },
+    /// There are no videos found in the bucket.
+    #[snafu(display("No videos found in the S3 bucket"))]
+    NoVideosFound,
     /// An error occurred while getting a video.
     #[snafu(display("An error occurred while getting a video"))]
     GetObject {
@@ -87,9 +91,8 @@ impl Client {
 
         let names = resp
             .contents()
-            .to_owned()
-            .into_iter()
-            .filter_map(|obj| obj.key.map(VideoName::from))
+            .iter()
+            .filter_map(|obj| obj.key.as_ref().map(|s| VideoName(s.clone())))
             .collect();
 
         Ok(names)
@@ -105,7 +108,7 @@ impl Client {
             .client
             .get_object()
             .bucket(&self.bucket_name)
-            .key(name)
+            .key(name.as_ref())
             .send()
             .await
             .context(GetObjectSnafu)?;
@@ -117,19 +120,13 @@ impl Client {
 
     pub async fn random_video(&self) -> Result<Video, ClientError> {
         let videos = self.list_videos().await?;
-        let random_index = (rand::random::<u32>() as usize) % videos.len();
-        self.select_video(&videos[random_index]).await
+        let random_video_name = videos.choose(&mut rng()).context(NoVideosFoundSnafu)?;
+        self.select_video(random_video_name).await
     }
 }
 
-impl From<String> for VideoName {
-    fn from(name: String) -> Self {
-        Self(name)
-    }
-}
-
-impl From<&VideoName> for String {
-    fn from(video: &VideoName) -> Self {
-        video.0.clone()
+impl AsRef<str> for VideoName {
+    fn as_ref(&self) -> &str {
+        &self.0
     }
 }

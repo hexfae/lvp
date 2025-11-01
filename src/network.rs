@@ -7,7 +7,7 @@ use std::{
 
 use snafu::{ResultExt, Snafu};
 use tokio::{
-    io::AsyncWriteExt,
+    io::{AsyncWriteExt, BufWriter},
     net::TcpStream,
     time::{MissedTickBehavior, interval},
 };
@@ -17,7 +17,7 @@ use crate::{frame::Frame, video::Video};
 /// A wrapper around a TCP stream.
 pub struct Network {
     /// The TCP stream.
-    stream: TcpStream,
+    stream: BufWriter<TcpStream>,
     /// The pixelflut server address.
     addr: String,
     /// The previous frame sent to the server, used for caching.
@@ -51,6 +51,14 @@ pub enum NetworkError {
         /// The source of the error.
         source: std::io::Error,
     },
+    /// Failed to flush TCP stream on the specified server.
+    #[snafu(display("failed to flush TCP stream on {addr}"))]
+    TcpFlushError {
+        /// The address of the server.
+        addr: String,
+        /// The source of the error.
+        source: std::io::Error,
+    },
 }
 
 impl Network {
@@ -63,9 +71,11 @@ impl Network {
     /// not set or if the TCP connection fails.
     pub async fn new() -> Result<Self, NetworkError> {
         let addr = var("PIXELFLUT_ADDRESS").context(NoAddressSetSnafu)?;
-        let stream = TcpStream::connect(&addr)
-            .await
-            .with_context(|_| TcpConnectSnafu { addr: addr.clone() })?;
+        let stream = BufWriter::new(
+            TcpStream::connect(&addr)
+                .await
+                .with_context(|_| TcpConnectSnafu { addr: addr.clone() })?,
+        );
         let previous_frame = None;
         let command_buffer = Vec::new();
 
@@ -109,6 +119,9 @@ impl Network {
             .await
             .with_context(|_| TcpWriteSnafu {
                 addr: self.addr.clone(),
-            })
+            })?;
+        self.stream.flush().await.with_context(|_| TcpFlushSnafu {
+            addr: self.addr.clone(),
+        })
     }
 }

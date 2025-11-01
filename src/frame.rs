@@ -10,20 +10,18 @@ pub struct Frame {
 }
 
 /// A single pixel of a frame.
-#[derive(Debug, PartialEq)]
-pub struct Pixel(Red, Green, Blue);
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+pub struct Pixel {
+    r: u8,
+    g: u8,
+    b: u8,
+}
 
-/// A single red component of a pixel.
-#[derive(Debug, PartialEq)]
-struct Red(u8);
+/// The length of a pixelpwnr-server binary PX command in bytes: `PBxxyyrgba`.
+const BINARY_COMMAND_LENGTH: usize = 10;
 
-/// A single green component of a pixel.
-#[derive(Debug, PartialEq)]
-struct Green(u8);
-
-/// A single blue component of a pixel.
-#[derive(Debug, PartialEq)]
-struct Blue(u8);
+/// The maximum alpha value for a pixel.
+const OPAQUE_ALPHA: u8 = 255;
 
 impl Frame {
     /// Converts the frame to a
@@ -38,44 +36,37 @@ impl Frame {
         width: u32,
     ) {
         command_buffer.clear();
-        command_buffer.reserve(self.pixels.len());
+        command_buffer.reserve(self.pixels.len() * BINARY_COMMAND_LENGTH);
         for (index, pixel) in self.pixels.iter().enumerate() {
             if previous_frame.is_some_and(|previous| previous.pixels[index] == *pixel) {
                 continue;
             }
-            let part = to_binary_command(index, width, pixel);
-            command_buffer.extend(part);
+
+            command_buffer.extend(PIXEL_BINARY_COMMAND);
+            command_buffer.extend(coordinates_from(index, width));
+            command_buffer.extend(pixel.as_rgba_bytes());
         }
     }
 }
 
-fn to_binary_command(index: usize, width: u32, pixel: &Pixel) -> Vec<u8> {
-    let mut command = Vec::with_capacity(10);
+const PIXEL_BINARY_COMMAND: [u8; 2] = *b"PB";
+
+const fn coordinates_from(index: usize, width: u32) -> [u8; 4] {
     let index = index as u32;
-    // the reason why we cast the products as u16 is because
-    // pixelpwnr-server's binary PX command expects u16 coordinates
-    let x = (index % width) as u16;
-    let y = (index / width) as u16;
-    command.extend(b"PB");
-    command.extend(&x.to_le_bytes());
-    command.extend(&y.to_le_bytes());
-    command.extend(pixel);
-    command
+    let x = ((index % width) as u16).to_le_bytes();
+    let y = ((index / width) as u16).to_le_bytes();
+
+    [x[0], x[1], y[0], y[1]]
 }
 
 impl Pixel {
     /// Create a new pixel with the given red, green, and blue components.
-    pub const fn new(red: u8, green: u8, blue: u8) -> Self {
-        Self(Red(red), Green(green), Blue(blue))
+    pub const fn new(r: u8, g: u8, b: u8) -> Self {
+        Self { r, g, b }
     }
-}
 
-impl IntoIterator for &Pixel {
-    type Item = u8;
-    type IntoIter = std::array::IntoIter<u8, 4>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        [self.0.0, self.1.0, self.2.0, u8::MAX].into_iter()
+    const fn as_rgba_bytes(self) -> [u8; 4] {
+        [self.r, self.g, self.b, OPAQUE_ALPHA]
     }
 }
 
