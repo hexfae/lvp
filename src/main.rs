@@ -5,20 +5,20 @@ mod frame;
 mod network;
 mod video;
 
-use client::{Client, ClientError};
+use client::{S3Client, S3Error};
 use network::{Network, NetworkError};
 use snafu::Snafu;
 
 #[tokio::main]
 #[snafu::report]
 async fn main() -> Result<(), Error> {
-    let client = Client::new().await?;
+    let client = S3Client::new().await?;
 
     loop {
         let mut network = Network::new().await?;
         let video = client.random_video().await?;
         if let Err(why) = network.send_video(video).await {
-            eprintln!("Error sending video: {}", why);
+            eprintln!("Error sending video: {why}");
         }
     }
 }
@@ -30,7 +30,7 @@ enum Error {
     #[snafu(transparent)]
     Client {
         /// See [`ClientError`].
-        source: ClientError,
+        source: S3Error,
     },
     /// See [`NetworkError`].
     #[snafu(transparent)]

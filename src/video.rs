@@ -2,9 +2,9 @@
 
 use aws_sdk_s3::operation::get_object::GetObjectOutput;
 use snafu::{ResultExt, Snafu};
-use std::io::{self, Write};
+use std::io;
 use tempfile::NamedTempFile;
-use tokio::{fs::File, io::AsyncReadExt, task::spawn_blocking};
+use tokio::{fs::File, task::spawn_blocking};
 use video_rs::Decoder;
 
 use crate::frame::{Frame, Pixel};
@@ -63,7 +63,7 @@ impl Video {
     /// Creates a new video from an S3 object.
     pub async fn from_object(object: GetObjectOutput) -> Result<Self, ReadVideoError> {
         // video-rs requires a path (or url) to decode from
-        let tmp_file = NamedTempFile::new().unwrap();
+        let tmp_file = NamedTempFile::new().context(CreateTempFileSnafu)?;
         let path = tmp_file.path().to_owned();
 
         let mut file = File::create(&path)

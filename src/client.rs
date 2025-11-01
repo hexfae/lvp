@@ -1,29 +1,26 @@
 //! The client struct responsible for interacting with the S3 bucket.
 
-use std::env::{VarError, var};
-
+use crate::video::{ReadVideoError, Video};
 use aws_sdk_s3::{
+    Client,
     error::SdkError,
     operation::{get_object::GetObjectError, list_objects_v2::ListObjectsV2Error},
 };
 use rand::{rng, seq::IndexedRandom};
 use snafu::{OptionExt, ResultExt, Snafu};
-
-use crate::video::{ReadVideoError, Video};
+use std::env::{VarError, var};
 
 /// A wrapper around the S3 client.
-pub struct Client {
+pub struct S3Client {
     /// The S3 client.
-    client: aws_sdk_s3::Client,
+    client: Client,
     /// The name of the S3 bucket containing videos.
     bucket_name: String,
 }
 
-/// The name of a video.
-pub struct VideoName(String);
-
+/// An error occurred with the S3 client.
 #[derive(Debug, Snafu)]
-pub enum ClientError {
+pub enum S3Error {
     /// The `S3_BUCKET_NAME` environment variable is not set.
     #[snafu(display("S3_BUCKET_NAME environment variable is not set"))]
     BucketNameUnsetError {
@@ -34,7 +31,8 @@ pub enum ClientError {
     #[snafu(display("An error occurred while listing videos"))]
     ListVideos {
         /// The source of the error.
-        source: SdkError<ListObjectsV2Error>,
+        #[snafu(source(from(SdkError<ListObjectsV2Error>, Box::new)))]
+        source: Box<SdkError<ListObjectsV2Error>>,
     },
     /// There are no videos found in the bucket.
     #[snafu(display("No videos found in the S3 bucket"))]
@@ -54,13 +52,13 @@ pub enum ClientError {
     },
 }
 
-impl Client {
+impl S3Client {
     /// Creates a new client.
     ///
     /// # Errors
     ///
     /// This function will return an error if the `S3_BUCKET_NAME` environment variable is not set.
-    pub async fn new() -> Result<Self, ClientError> {
+    pub async fn new() -> Result<Self, S3Error> {
         let sdk_config = aws_config::load_from_env().await;
         let config = aws_sdk_s3::config::Builder::from(&sdk_config)
             .force_path_style(true)
@@ -75,12 +73,19 @@ impl Client {
         })
     }
 
+    /// Returns a random video from the S3 bucket.
+    pub async fn random_video(&self) -> Result<Video, S3Error> {
+        let videos = self.video_names().await?;
+        let random_video_name = videos.choose(&mut rng()).context(NoVideosFoundSnafu)?;
+        self.select_video(random_video_name).await
+    }
+
     /// Returns a list of video names. Returns an empty list if no videos are found.
     ///
     /// # Errors
     ///
     /// This function will return an error if the S3 API call fails.
-    pub async fn list_videos(&self) -> Result<Vec<VideoName>, ClientError> {
+    async fn video_names(&self) -> Result<Vec<String>, S3Error> {
         let resp = self
             .client
             .list_objects_v2()
@@ -92,7 +97,7 @@ impl Client {
         let names = resp
             .contents()
             .iter()
-            .filter_map(|obj| obj.key.as_ref().map(|s| VideoName(s.clone())))
+            .filter_map(|obj| obj.key.clone())
             .collect();
 
         Ok(names)
@@ -103,7 +108,7 @@ impl Client {
     /// # Errors
     ///
     /// This function will return an error if the S3 API call fails or if the video is empty.
-    pub async fn select_video(&self, name: &VideoName) -> Result<Video, ClientError> {
+    async fn select_video(&self, name: impl AsRef<str>) -> Result<Video, S3Error> {
         let object = self
             .client
             .get_object()
@@ -116,17 +121,5 @@ impl Client {
         let video = Video::from_object(object).await.context(ReadVideoSnafu)?;
 
         Ok(video)
-    }
-
-    pub async fn random_video(&self) -> Result<Video, ClientError> {
-        let videos = self.list_videos().await?;
-        let random_video_name = videos.choose(&mut rng()).context(NoVideosFoundSnafu)?;
-        self.select_video(random_video_name).await
-    }
-}
-
-impl AsRef<str> for VideoName {
-    fn as_ref(&self) -> &str {
-        &self.0
     }
 }

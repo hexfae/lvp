@@ -12,10 +12,16 @@ pub struct Frame {
 /// A single pixel of a frame.
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub struct Pixel {
+    /// The red component of the pixel.
     r: u8,
+    /// The green component of the pixel.
     g: u8,
+    /// The blue component of the pixel.
     b: u8,
 }
+
+/// The binary command used to send a pixel to the server.
+const PIXEL_BINARY_COMMAND: [u8; 2] = *b"PB";
 
 /// The length of a pixelpwnr-server binary PX command in bytes: `PBxxyyrgba`.
 const BINARY_COMMAND_LENGTH: usize = 10;
@@ -27,12 +33,10 @@ impl Frame {
     /// Converts the frame to a
     /// [pixelpwnr-server](https://github.com/timvisee/pixelpwnr-server) binary
     /// PX command.
-    // videos are not expected to be larger than 65535x65535 pixels
-    #[expect(clippy::cast_possible_truncation)]
     pub fn fill_command_buffer(
         &self,
         command_buffer: &mut Vec<u8>,
-        previous_frame: Option<&Frame>,
+        previous_frame: Option<&Self>,
         width: u32,
     ) {
         command_buffer.clear();
@@ -49,8 +53,9 @@ impl Frame {
     }
 }
 
-const PIXEL_BINARY_COMMAND: [u8; 2] = *b"PB";
-
+/// Converts the index of a pixel to its coordinates.
+// videos are not expected to be larger than 65535x65535 pixels
+#[expect(clippy::cast_possible_truncation)]
 const fn coordinates_from(index: usize, width: u32) -> [u8; 4] {
     let index = index as u32;
     let x = ((index % width) as u16).to_le_bytes();
@@ -65,6 +70,7 @@ impl Pixel {
         Self { r, g, b }
     }
 
+    /// Converts the pixel to its RGBA byte representation.
     const fn as_rgba_bytes(self) -> [u8; 4] {
         [self.r, self.g, self.b, OPAQUE_ALPHA]
     }

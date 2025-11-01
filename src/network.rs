@@ -87,6 +87,11 @@ impl Network {
         })
     }
 
+    /// Sends a video to the pixelflut server.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing to the TCP connection fails.
     pub async fn send_video(&mut self, video: Video) -> Result<(), NetworkError> {
         let width = video.width();
         let frame_duration = Duration::from_secs_f32(1.0 / video.frame_rate());
