@@ -11,7 +11,7 @@ use tempfile::NamedTempFile;
 use tokio::{fs::File, task::spawn_blocking};
 use video_rs::{Decoder, DecoderBuilder, Resize};
 
-use crate::frame::{Frame, Pixel};
+use crate::frame::{Dimensions, Frame, Pixel};
 
 /// A wrapper around a video.
 pub struct Video {
@@ -113,9 +113,9 @@ impl Video {
         Ok(Self { decoder })
     }
 
-    /// Returns the width of the video.
-    pub fn width(&self) -> u32 {
-        self.decoder.size_out().0
+    /// Returns the dimensions of the video.
+    pub fn dimensions(&self) -> Dimensions {
+        Dimensions::from(self.decoder.size_out())
     }
 
     /// Returns the frame rate of the video.

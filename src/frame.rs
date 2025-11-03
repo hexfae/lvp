@@ -1,6 +1,11 @@
 //! The frame struct representing a single frame of a video.
 
 use ndarray::{ArrayBase, Dim, ViewRepr};
+use snafu::{ResultExt, Snafu};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::TcpStream,
+};
 
 /// A single frame of a video.
 #[derive(Debug)]
@@ -20,6 +25,16 @@ pub struct Pixel {
     b: u8,
 }
 
+pub struct Dimensions {
+    width: u32,
+    height: u32,
+}
+
+/// Enough bytes for `SIZE xxxx yyyy`.
+const SIZE_BUF_SIZE: usize = 14;
+
+const SIZE_COMMAND: &[u8; 5] = b"SIZE\n";
+
 /// The binary command used to send a pixel to the server.
 const PIXEL_BINARY_COMMAND: [u8; 2] = *b"PB";
 
@@ -37,7 +52,8 @@ impl Frame {
         &self,
         command_buffer: &mut Vec<u8>,
         previous_frame: Option<&Self>,
-        width: u32,
+        video: &Dimensions,
+        canvas: &Dimensions,
     ) {
         command_buffer.clear();
         command_buffer.reserve(self.pixels.len() * BINARY_COMMAND_LENGTH);
@@ -47,7 +63,7 @@ impl Frame {
             }
 
             command_buffer.extend(PIXEL_BINARY_COMMAND);
-            command_buffer.extend(coordinates_from(index, width));
+            command_buffer.extend(coordinates_from(index, video, canvas));
             command_buffer.extend(pixel.as_rgba_bytes());
         }
     }
@@ -56,10 +72,22 @@ impl Frame {
 /// Converts the index of a pixel to its coordinates.
 // videos are not expected to be larger than 65535x65535 pixels
 #[expect(clippy::cast_possible_truncation)]
-const fn coordinates_from(index: usize, width: u32) -> [u8; 4] {
+const fn coordinates_from(index: usize, video: &Dimensions, canvas: &Dimensions) -> [u8; 4] {
     let index = index as u32;
-    let x = ((index % width) as u16).to_le_bytes();
-    let y = ((index / width) as u16).to_le_bytes();
+    let width = video.width();
+    let height = video.height();
+
+    let video_x = index % width;
+    let video_y = index / width;
+
+    let start_x = canvas.width().saturating_sub(width).saturating_add(video_x);
+    let start_y = canvas
+        .height()
+        .saturating_sub(height)
+        .saturating_add(video_y);
+
+    let x = start_x.to_le_bytes();
+    let y = start_y.to_le_bytes();
 
     [x[0], x[1], y[0], y[1]]
 }
@@ -73,6 +101,46 @@ impl Pixel {
     /// Converts the pixel to its RGBA byte representation.
     const fn as_rgba_bytes(self) -> [u8; 4] {
         [self.r, self.g, self.b, OPAQUE_ALPHA]
+    }
+}
+
+#[derive(Debug, Snafu)]
+pub enum CanvasSizeError {
+    #[snafu(display("failed to send size command to server"))]
+    Write { source: std::io::Error },
+    #[snafu(display("failed to read size response from server"))]
+    Read { source: std::io::Error },
+    #[snafu(display("failed to parse size response"))]
+    Parse { source: std::num::ParseIntError },
+}
+
+impl Dimensions {
+    pub async fn try_from_stream(stream: &mut TcpStream) -> Result<Self, CanvasSizeError> {
+        stream.write_all(SIZE_COMMAND).await.context(WriteSnafu)?;
+        let mut buf = [0; SIZE_BUF_SIZE];
+        stream.read_exact(&mut buf).await.context(ReadSnafu)?;
+
+        let width_string = String::from_utf8_lossy(&buf[5..9]);
+        let height_string = String::from_utf8_lossy(&buf[10..14]);
+
+        let width = width_string.parse().context(ParseSnafu)?;
+        let height = height_string.parse().context(ParseSnafu)?;
+
+        Ok(Self { width, height })
+    }
+
+    pub const fn width(&self) -> u32 {
+        self.width
+    }
+
+    pub const fn height(&self) -> u32 {
+        self.height
+    }
+}
+
+impl From<(u32, u32)> for Dimensions {
+    fn from((width, height): (u32, u32)) -> Self {
+        Self { width, height }
     }
 }
 

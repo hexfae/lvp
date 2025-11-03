@@ -12,7 +12,10 @@ use tokio::{
     time::{MissedTickBehavior, interval},
 };
 
-use crate::{frame::Frame, video::Video};
+use crate::{
+    frame::{CanvasSizeError, Dimensions, Frame},
+    video::Video,
+};
 
 /// A wrapper around a TCP stream.
 pub struct Network {
@@ -20,6 +23,8 @@ pub struct Network {
     stream: BufWriter<TcpStream>,
     /// The pixelflut server address.
     addr: String,
+    /// The server's canvas' dimensions.
+    canvas: Dimensions,
     /// The previous frame sent to the server, used for caching.
     previous_frame: Option<Frame>,
     /// The command buffer used to build the command.
@@ -59,6 +64,8 @@ pub enum NetworkError {
         /// The source of the error.
         source: std::io::Error,
     },
+    #[snafu(transparent)]
+    TcpSizeError { source: CanvasSizeError },
 }
 
 impl Network {
@@ -71,17 +78,19 @@ impl Network {
     /// not set or if the TCP connection fails.
     pub async fn new() -> Result<Self, NetworkError> {
         let addr = var("PIXELFLUT_ADDRESS").context(NoAddressSetSnafu)?;
-        let stream = BufWriter::new(
-            TcpStream::connect(&addr)
-                .await
-                .with_context(|_| TcpConnectSnafu { addr: addr.clone() })?,
-        );
+        let mut stream = TcpStream::connect(&addr)
+            .await
+            .with_context(|_| TcpConnectSnafu { addr: addr.clone() })?;
+
+        let canvas = Dimensions::try_from_stream(&mut stream).await?;
+
         let previous_frame = None;
         let command_buffer = Vec::new();
 
         Ok(Self {
-            stream,
+            stream: BufWriter::new(stream),
             addr,
+            canvas,
             previous_frame,
             command_buffer,
         })
@@ -93,7 +102,7 @@ impl Network {
     ///
     /// Returns an error if writing to the TCP connection fails.
     pub async fn send_video(&mut self, video: Video) -> Result<(), NetworkError> {
-        let width = video.width();
+        let dimensions = video.dimensions();
         let frame_duration = Duration::from_secs_f32(1.0 / video.frame_rate());
 
         let mut ticker = interval(frame_duration);
@@ -101,7 +110,7 @@ impl Network {
 
         for frame in video {
             ticker.tick().await;
-            self.send_frame(&frame, width).await?;
+            self.send_frame(&frame, &dimensions).await?;
             self.previous_frame = Some(frame);
         }
         self.previous_frame = None;
@@ -113,11 +122,16 @@ impl Network {
     /// # Errors
     ///
     /// Returns an error if writing to the TCP connection fails.
-    pub async fn send_frame(&mut self, frame: &Frame, width: u32) -> Result<(), NetworkError> {
+    pub async fn send_frame(
+        &mut self,
+        frame: &Frame,
+        dimensions: &Dimensions,
+    ) -> Result<(), NetworkError> {
         frame.fill_command_buffer(
             &mut self.command_buffer,
             self.previous_frame.as_ref(),
-            width,
+            dimensions,
+            &self.canvas,
         );
         self.stream
             .write_all(&self.command_buffer)
