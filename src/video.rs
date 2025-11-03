@@ -2,10 +2,14 @@
 
 use aws_sdk_s3::operation::get_object::GetObjectOutput;
 use snafu::{ResultExt, Snafu};
-use std::io;
+use std::{
+    env::{VarError, var},
+    io,
+    num::ParseIntError,
+};
 use tempfile::NamedTempFile;
 use tokio::{fs::File, task::spawn_blocking};
-use video_rs::Decoder;
+use video_rs::{Decoder, DecoderBuilder, Resize};
 
 use crate::frame::{Frame, Pixel};
 
@@ -24,6 +28,18 @@ pub enum ReadVideoError {
         /// The source of the error.
         source: io::Error,
     },
+    /// No width specified.
+    #[snafu(display("LVP_MAX_WIDTH environment variable is not set"))]
+    NoWidth { source: VarError },
+    /// No height specified.
+    #[snafu(display("LVP_MAX_HEIGHT environment variable is not set"))]
+    NoHeight { source: VarError },
+    /// Invalid width specified.
+    #[snafu(display("LVP_MAX_WIDTH environment variable is not a valid number"))]
+    InvalidWidth { source: ParseIntError },
+    /// Invalid height specified.
+    #[snafu(display("LVP_MAX_HEIGHT environment variable is not a valid number"))]
+    InvalidHeight { source: ParseIntError },
     /// See [`DecodeError`].
     #[snafu(transparent)]
     Decode {
@@ -76,17 +92,30 @@ impl Video {
 
         drop(file);
 
-        let decoder =
-            spawn_blocking(move || Decoder::new(path.clone()).context(CreateDecoderSnafu { path }))
-                .await
-                .expect("tokio join error")?;
+        let width = var("LVP_MAX_WIDTH")
+            .context(NoWidthSnafu)?
+            .parse()
+            .context(InvalidWidthSnafu)?;
+        let height = var("LVP_MAX_HEIGHT")
+            .context(NoHeightSnafu)?
+            .parse()
+            .context(InvalidHeightSnafu)?;
+
+        let decoder = spawn_blocking(move || {
+            DecoderBuilder::new(path.clone())
+                .with_resize(Resize::FitEven(width, height))
+                .build()
+                .context(CreateDecoderSnafu { path })
+        })
+        .await
+        .expect("tokio join error")?;
 
         Ok(Self { decoder })
     }
 
     /// Returns the width of the video.
     pub fn width(&self) -> u32 {
-        self.decoder.size().0
+        self.decoder.size_out().0
     }
 
     /// Returns the frame rate of the video.
