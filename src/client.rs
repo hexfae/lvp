@@ -5,10 +5,15 @@ use aws_sdk_s3::{
     Client,
     error::SdkError,
     operation::{get_object::GetObjectError, list_objects_v2::ListObjectsV2Error},
+    presigning::PresigningConfig,
 };
 use rand::{rng, seq::IndexedRandom};
 use snafu::{OptionExt, ResultExt, Snafu};
-use std::env::{VarError, var};
+use std::{
+    env::{VarError, var},
+    time::Duration,
+};
+use url::Url;
 
 /// A wrapper around the S3 client.
 pub struct S3Client {
@@ -50,6 +55,12 @@ pub enum S3Error {
         /// The source of the error.
         source: ReadVideoError,
     },
+    /// An error occured while parsing a video's URL.
+    #[snafu(display("An error occured while parsing a video's URL."))]
+    ParseUrlError {
+        /// The source of the error.
+        source: url::ParseError,
+    },
 }
 
 impl S3Client {
@@ -71,6 +82,34 @@ impl S3Client {
             client,
             bucket_name,
         })
+    }
+
+    /// Gets the url for a video from its name.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if getting the video from the S3 bucket failed,
+    /// or parsing the video's url failed.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the presigning config is not given an expiration time,
+    /// or if it's longer than 1 week (neither of which are true).
+    pub async fn get_video_url(&self, name: &str) -> Result<Url, S3Error> {
+        let presigning_config = PresigningConfig::expires_in(Duration::from_mins(5))
+            .expect("presigning config should be given and be less than 1 week");
+
+        let presigned_request = self
+            .client
+            .get_object()
+            .bucket(&self.bucket_name)
+            .key(name)
+            .presigned(presigning_config)
+            .await
+            .context(GetObjectSnafu)?;
+
+        let url = Url::parse(presigned_request.uri()).context(ParseUrlSnafu)?;
+        Ok(url)
     }
 
     /// Returns a random video from the S3 bucket.
@@ -114,16 +153,9 @@ impl S3Client {
     ///
     /// This function will return an error if the S3 API call fails or if the video is empty.
     async fn select_video(&self, name: impl AsRef<str>) -> Result<Video, S3Error> {
-        let object = self
-            .client
-            .get_object()
-            .bucket(&self.bucket_name)
-            .key(name.as_ref())
-            .send()
-            .await
-            .context(GetObjectSnafu)?;
+        let url = self.get_video_url(name.as_ref()).await?;
 
-        let video = Video::from_object(object).await.context(ReadVideoSnafu)?;
+        let video = Video::from_url(&url).context(ReadVideoSnafu)?;
 
         Ok(video)
     }

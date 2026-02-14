@@ -1,15 +1,12 @@
 //! The video struct containing the bytes of the video.
 
-use aws_sdk_s3::operation::get_object::GetObjectOutput;
 use snafu::{ResultExt, Snafu};
 use std::{
     env::{VarError, var},
     io,
     num::ParseIntError,
 };
-use tempfile::NamedTempFile;
-use tokio::{fs::File, task::spawn_blocking};
-use video_rs::{Decoder, DecoderBuilder, Resize};
+use video_rs::{Decoder, DecoderBuilder, Resize, Url};
 
 use crate::frame::{Dimensions, Frame, Pixel};
 
@@ -52,67 +49,24 @@ pub enum ReadVideoError {
         /// The source of the error.
         source: ParseIntError,
     },
-    /// See [`DecodeError`].
-    #[snafu(transparent)]
-    Decode {
-        /// See [`DecodeError`].
-        source: DecodeError,
-    },
-}
-
-/// An error occurred while decoding a video.
-#[derive(Debug, Snafu)]
-pub enum DecodeError {
-    /// An error occurred while creating a temporary file.
-    #[snafu(display("Failed to create temporary file"))]
-    CreateTempFile {
-        /// The source of the error.
-        source: io::Error,
-    },
-    /// An error occurred while writing to a temporary file.
-    #[snafu(display("Failed to write to temporary file at {}", path.display()))]
-    WriteTempFile {
-        /// The path of the temporary file.
-        path: std::path::PathBuf,
-        /// The source of the error.
-        source: io::Error,
-    },
-    /// An error occurred while creating a decoder from a file.
-    #[snafu(display("Failed to create decoder from {}", path.display()))]
+    /// An error occurred while creating a decoder from a URL.
+    #[snafu(display("Failed to create decoder from {url}"))]
     CreateDecoder {
-        /// The path of the video file.
-        path: std::path::PathBuf,
+        /// The URL.
+        url: String,
         /// The source of the error.
         source: video_rs::Error,
     },
 }
 
 impl Video {
-    /// Creates a new video from an S3 object.
+    /// Retrieves a video from a url.
     ///
     /// # Errors
     ///
-    /// Errors if creating the temporary file fails, writing to it fails, parsing
-    /// ``LVP_MAX_WIDTH`` or ``LVP_MAX_HEIGHT`` fails, or building a decoder fails.
-    ///
-    /// # Panics
-    ///
-    /// Panics on Tokio join error
-    pub async fn from_object(object: GetObjectOutput) -> Result<Self, ReadVideoError> {
-        // video-rs requires a path (or url) to decode from
-        let tmp_file = NamedTempFile::new().context(CreateTempFileSnafu)?;
-        let path = tmp_file.path().to_owned();
-
-        let mut file = File::create(&path)
-            .await
-            .context(WriteTempFileSnafu { path: path.clone() })?;
-        let mut body = object.body.into_async_read();
-        tokio::io::copy(&mut body, &mut file)
-            .await
-            .context(WriteTempFileSnafu { path: path.clone() })?;
-
-        drop(file);
-
+    /// Returns an error if `LVP_MAX_WIDTH` or `LVP_MAX_HEIGHT` failed to
+    /// parse, or if the video failed to
+    pub fn from_url(url: &Url) -> Result<Self, ReadVideoError> {
         let width = var("LVP_MAX_WIDTH")
             .context(NoWidthSnafu)?
             .parse()
@@ -122,14 +76,13 @@ impl Video {
             .parse()
             .context(InvalidHeightSnafu)?;
 
-        let decoder = spawn_blocking(move || {
-            DecoderBuilder::new(path.clone())
-                .with_resize(Resize::FitEven(width, height))
-                .build()
-                .context(CreateDecoderSnafu { path })
-        })
-        .await
-        .expect("tokio join error")?;
+        let decoder = DecoderBuilder::new(url)
+            .with_resize(Resize::FitEven(width, height))
+            .build()
+            .map_err(|e| ReadVideoError::CreateDecoder {
+                url: url.to_string(),
+                source: e,
+            })?;
 
         Ok(Self { decoder })
     }
