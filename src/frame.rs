@@ -9,19 +9,12 @@ use tokio::{
 /// A single frame of a video.
 #[derive(Debug)]
 pub struct Frame {
-    /// The pixels of the frame.
-    pixels: Vec<Pixel>,
-}
-
-/// A single pixel of a frame.
-#[derive(Debug, PartialEq, Eq, Copy, Clone)]
-pub struct Pixel {
-    /// The red component of the pixel.
-    r: u8,
-    /// The green component of the pixel.
-    g: u8,
-    /// The blue component of the pixel.
-    b: u8,
+    /// The bytes that make up the video.
+    pub data: Vec<u8>,
+    /// The width of the video.
+    pub width: u32,
+    /// The height of the video.
+    pub height: u32,
 }
 
 /// The dimensions of the video, in pixels.
@@ -52,50 +45,46 @@ impl Frame {
         &self,
         command_buffer: &mut Vec<u8>,
         previous_frame: Option<&Self>,
-        video: &Dimensions,
         canvas: &Dimensions,
     ) {
         command_buffer.clear();
 
-        let start_x = canvas.width().saturating_sub(video.width());
-        let start_y = canvas.height().saturating_sub(video.height());
+        let mut index = 0;
+        for y in 0..self.height {
+            for x in 0..self.width {
+                let r = self.data[index];
+                let g = self.data[index + 1];
+                let b = self.data[index + 2];
+                index += 3;
 
-        let mut current_x = 0;
-        let mut current_y = 0;
+                // reduce color "resolution" to cache more pixels
+                let r = (r / 10) * 10;
+                let g = (g / 10) * 10;
+                let b = (b / 10) * 10;
 
-        for (index, pixel) in self.pixels.iter().enumerate() {
-            if current_x >= video.width() {
-                current_x = 0;
-                current_y += 1;
+                if let Some(previous) = previous_frame
+                    && index <= previous.data.len()
+                {
+                    let pr = previous.data[index - 3];
+                    let pg = previous.data[index - 2];
+                    let pb = previous.data[index - 1];
+                    if r == pr && g == pg && b == pb {
+                        continue;
+                    }
+                }
+
+                let offset_x = canvas.width() - self.width;
+                let offset_y = canvas.height() - self.height;
+
+                let final_x = offset_x + x;
+                let final_y = offset_y + y;
+
+                command_buffer.extend(PIXEL_BINARY_COMMAND);
+                command_buffer.extend(&final_x.to_le_bytes()[0..2]);
+                command_buffer.extend(&final_y.to_le_bytes()[0..2]);
+                command_buffer.extend([r, g, b, OPAQUE_ALPHA]);
             }
-
-            if previous_frame.is_some_and(|previous| previous.pixels[index] == *pixel) {
-                current_x += 1;
-                continue;
-            }
-
-            let final_x = start_x + current_x;
-            let final_y = start_y + current_y;
-
-            command_buffer.extend(PIXEL_BINARY_COMMAND);
-            command_buffer.extend(&final_x.to_le_bytes()[0..2]);
-            command_buffer.extend(&final_y.to_le_bytes()[0..2]);
-            command_buffer.extend(pixel.as_rgba_bytes());
-            current_x += 1;
         }
-    }
-}
-
-impl Pixel {
-    /// Create a new pixel with the given red, green, and blue components.
-    #[must_use]
-    pub const fn new(r: u8, g: u8, b: u8) -> Self {
-        Self { r, g, b }
-    }
-
-    /// Converts the pixel to its RGBA byte representation.
-    const fn as_rgba_bytes(self) -> [u8; 4] {
-        [self.r, self.g, self.b, OPAQUE_ALPHA]
     }
 }
 
@@ -157,13 +146,5 @@ impl Dimensions {
 impl From<(u32, u32)> for Dimensions {
     fn from((width, height): (u32, u32)) -> Self {
         Self { width, height }
-    }
-}
-
-impl FromIterator<Pixel> for Frame {
-    fn from_iter<T: IntoIterator<Item = Pixel>>(iter: T) -> Self {
-        Self {
-            pixels: iter.into_iter().collect(),
-        }
     }
 }

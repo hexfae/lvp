@@ -118,7 +118,6 @@ impl Network {
     ///
     /// Returns an error if writing to the TCP connection(s) fail(s).
     pub async fn send_video(&mut self, video: Video) -> Result<(), NetworkError> {
-        let dimensions = video.dimensions();
         let frame_duration = Duration::from_secs_f32(1.0 / video.frame_rate());
 
         let mut ticker = interval(frame_duration);
@@ -126,7 +125,7 @@ impl Network {
 
         for frame in video {
             ticker.tick().await;
-            self.send_frame(&frame, &dimensions).await?;
+            self.send_frame(&frame).await?;
             self.previous_frame = Some(frame);
         }
         self.previous_frame = None;
@@ -138,15 +137,10 @@ impl Network {
     /// # Errors
     ///
     /// Returns an error if writing to the TCP connection(s) fail(s).
-    pub async fn send_frame(
-        &mut self,
-        frame: &Frame,
-        dimensions: &Dimensions,
-    ) -> Result<(), NetworkError> {
+    pub async fn send_frame(&mut self, frame: &Frame) -> Result<(), NetworkError> {
         frame.fill_command_buffer(
             &mut self.command_buffer,
             self.previous_frame.as_ref(),
-            dimensions,
             &self.canvas,
         );
         if self.command_buffer.len() < self.streams.len() {

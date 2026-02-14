@@ -8,7 +8,7 @@ use std::{
 };
 use video_rs::{Decoder, DecoderBuilder, Resize, Url};
 
-use crate::frame::{Dimensions, Frame, Pixel};
+use crate::frame::Frame;
 
 /// A wrapper around a video.
 pub struct Video {
@@ -87,12 +87,6 @@ impl Video {
         Ok(Self { decoder })
     }
 
-    /// Returns the dimensions of the video.
-    #[must_use]
-    pub fn dimensions(&self) -> Dimensions {
-        Dimensions::from(self.decoder.size_out())
-    }
-
     #[must_use]
     /// Returns the frame rate of the video.
     pub fn frame_rate(&self) -> f32 {
@@ -104,17 +98,13 @@ impl Iterator for Video {
     type Item = Frame;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let frame = self.decoder.decode().ok()?.1;
+        let data = self.decoder.decode().ok()?.1.flatten().to_vec();
+        let (width, height) = self.decoder.size_out();
 
-        Some(
-            frame
-                // reduce color "resolution" to cache more pixels
-                .mapv_into(|pixel| (pixel / 10) * 10)
-                .into_flat()
-                .exact_chunks(3)
-                .into_iter()
-                .map(|rgb| Pixel::new(rgb[0], rgb[1], rgb[2]))
-                .collect(),
-        )
+        Some(Frame {
+            data,
+            width,
+            height,
+        })
     }
 }
