@@ -81,6 +81,10 @@ impl Network {
     ///
     /// Returns an error if the `PIXELFLUT_ADDRESS` environment variable is
     /// not set or if the TCP connection fails.
+    ///
+    /// # Panics
+    ///
+    /// Panics if setting `TCP_NODELAY` fails, which it should never do.
     pub async fn new() -> Result<Self, NetworkError> {
         let addr = var("PIXELFLUT_ADDRESS").context(NoAddressSetSnafu)?;
         let n_streams = var("NUMBER_OF_STREAMS")
@@ -90,14 +94,19 @@ impl Network {
         let mut stream = TcpStream::connect(&addr)
             .await
             .with_context(|_| TcpConnectSnafu { addr: addr.clone() })?;
+        stream
+            .set_nodelay(true)
+            .expect("setting nodelay should never fail");
         let canvas = Dimensions::try_from_stream(&mut stream).await?;
         let mut streams = vec![BufWriter::new(stream)];
         for _ in 0..n_streams - 1 {
-            streams.push(BufWriter::new(
-                TcpStream::connect(&addr)
-                    .await
-                    .with_context(|_| TcpConnectSnafu { addr: addr.clone() })?,
-            ));
+            let stream = TcpStream::connect(&addr)
+                .await
+                .with_context(|_| TcpConnectSnafu { addr: addr.clone() })?;
+            stream
+                .set_nodelay(true)
+                .expect("setting nodelay should never fail");
+            streams.push(BufWriter::new(stream));
         }
 
         let previous_frame = None;
