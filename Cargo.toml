@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 aws-config = { version = "1.8.13", features = ["behavior-version-latest"] }
 aws-sdk-s3 = { version = "1.120.0", features = ["behavior-version-latest"] }
+futures = "0.3.31"
 ndarray = "0.17.2"
 rand = "0.10.0"
 snafu = "0.8.9"

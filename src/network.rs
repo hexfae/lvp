@@ -5,6 +5,7 @@ use std::{
     time::Duration,
 };
 
+use futures::future::try_join_all;
 use snafu::{ResultExt, Snafu};
 use tokio::{
     io::{AsyncWriteExt, BufWriter},
@@ -17,10 +18,10 @@ use crate::{
     video::Video,
 };
 
-/// A wrapper around a TCP stream.
+/// A wrapper around one or many TCP streams.
 pub struct Network {
-    /// The TCP stream.
-    stream: BufWriter<TcpStream>,
+    /// The TCP stream(s).
+    streams: Vec<BufWriter<TcpStream>>,
     /// The pixelflut server address.
     addr: String,
     /// The server's canvas' dimensions.
@@ -82,17 +83,28 @@ impl Network {
     /// not set or if the TCP connection fails.
     pub async fn new() -> Result<Self, NetworkError> {
         let addr = var("PIXELFLUT_ADDRESS").context(NoAddressSetSnafu)?;
+        let n_streams = var("NUMBER_OF_STREAMS")
+            .unwrap_or_else(|_| "1".to_string())
+            .parse()
+            .unwrap_or(1);
         let mut stream = TcpStream::connect(&addr)
             .await
             .with_context(|_| TcpConnectSnafu { addr: addr.clone() })?;
-
         let canvas = Dimensions::try_from_stream(&mut stream).await?;
+        let mut streams = vec![BufWriter::new(stream)];
+        for _ in 0..n_streams - 1 {
+            streams.push(BufWriter::new(
+                TcpStream::connect(&addr)
+                    .await
+                    .with_context(|_| TcpConnectSnafu { addr: addr.clone() })?,
+            ));
+        }
 
         let previous_frame = None;
         let command_buffer = Vec::new();
 
         Ok(Self {
-            stream: BufWriter::new(stream),
+            streams,
             addr,
             canvas,
             previous_frame,
@@ -104,7 +116,7 @@ impl Network {
     ///
     /// # Errors
     ///
-    /// Returns an error if writingidth  to the TCP connection fails.
+    /// Returns an error if writing to the TCP connection(s) fail(s).
     pub async fn send_video(&mut self, video: Video) -> Result<(), NetworkError> {
         let dimensions = video.dimensions();
         let frame_duration = Duration::from_secs_f32(1.0 / video.frame_rate());
@@ -125,7 +137,7 @@ impl Network {
     ///
     /// # Errors
     ///
-    /// Returns an error if writing to the TCP connection fails.
+    /// Returns an error if writing to the TCP connection(s) fail(s).
     pub async fn send_frame(
         &mut self,
         frame: &Frame,
@@ -137,14 +149,28 @@ impl Network {
             dimensions,
             &self.canvas,
         );
-        self.stream
-            .write_all(&self.command_buffer)
-            .await
-            .with_context(|_| TcpWriteSnafu {
-                addr: self.addr.clone(),
-            })?;
-        self.stream.flush().await.with_context(|_| TcpFlushSnafu {
-            addr: self.addr.clone(),
-        })
+        if self.command_buffer.len() < self.streams.len() {
+            return Ok(());
+        }
+        let chunk_size = self.command_buffer.len().div_ceil(self.streams.len());
+        let command_buffers = self.command_buffer.chunks(chunk_size);
+        let mut write_futures = Vec::new();
+        let addr = self.addr.clone();
+        for (stream, command_buffer) in self.streams.iter_mut().zip(command_buffers) {
+            let addr = addr.clone();
+            write_futures.push(async move {
+                stream
+                    .write_all(command_buffer)
+                    .await
+                    .with_context(|_| TcpWriteSnafu { addr: addr.clone() })?;
+                stream
+                    .flush()
+                    .await
+                    .with_context(|_| TcpFlushSnafu { addr })?;
+                Ok::<(), NetworkError>(())
+            });
+        }
+        try_join_all(write_futures).await?;
+        Ok(())
     }
 }
