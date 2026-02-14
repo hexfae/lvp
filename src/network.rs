@@ -64,8 +64,12 @@ pub enum NetworkError {
         /// The source of the error.
         source: std::io::Error,
     },
+    /// Failed to get the server's canvas size.
     #[snafu(transparent)]
-    TcpSizeError { source: CanvasSizeError },
+    TcpSizeError {
+        /// The source of the error.
+        source: CanvasSizeError,
+    },
 }
 
 impl Network {
@@ -100,7 +104,7 @@ impl Network {
     ///
     /// # Errors
     ///
-    /// Returns an error if writing to the TCP connection fails.
+    /// Returns an error if writingidth  to the TCP connection fails.
     pub async fn send_video(&mut self, video: Video) -> Result<(), NetworkError> {
         let dimensions = video.dimensions();
         let frame_duration = Duration::from_secs_f32(1.0 / video.frame_rate());

@@ -74,6 +74,11 @@ impl S3Client {
     }
 
     /// Returns a random video from the S3 bucket.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if it could not connect to the S3 bucket,
+    /// there are no videos in the S3 bucket, or parsing the video failed.
     pub async fn random_video(&self) -> Result<Video, S3Error> {
         let videos = self.video_names().await?;
         let random_video_name = videos.choose(&mut rng()).context(NoVideosFoundSnafu)?;

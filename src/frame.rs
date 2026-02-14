@@ -1,6 +1,5 @@
 //! The frame struct representing a single frame of a video.
 
-use ndarray::{ArrayBase, Dim, ViewRepr};
 use snafu::{ResultExt, Snafu};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -25,14 +24,18 @@ pub struct Pixel {
     b: u8,
 }
 
+/// The dimensions of the video, in pixels.
 pub struct Dimensions {
+    /// The width of the video, in pixels.
     width: u32,
+    /// The height of the video, in pixels.
     height: u32,
 }
 
 /// Enough bytes for `SIZE xxxx yyyy`.
 const SIZE_BUF_SIZE: usize = 14;
 
+/// The SIZE command for asking for the server's dimensions.
 const SIZE_COMMAND: &[u8; 5] = b"SIZE\n";
 
 /// The binary command used to send a pixel to the server.
@@ -94,6 +97,7 @@ const fn coordinates_from(index: usize, video: &Dimensions, canvas: &Dimensions)
 
 impl Pixel {
     /// Create a new pixel with the given red, green, and blue components.
+    #[must_use]
     pub const fn new(r: u8, g: u8, b: u8) -> Self {
         Self { r, g, b }
     }
@@ -104,17 +108,34 @@ impl Pixel {
     }
 }
 
+/// Requesting the server's canvas size failed.
 #[derive(Debug, Snafu)]
 pub enum CanvasSizeError {
+    /// Writing to the TCP stream failed.
     #[snafu(display("failed to send size command to server"))]
-    Write { source: std::io::Error },
+    Write {
+        /// The source of the error.
+        source: std::io::Error,
+    },
+    /// Reading from the TCP stream failed.
     #[snafu(display("failed to read size response from server"))]
-    Read { source: std::io::Error },
+    Read {
+        /// The source of the error.
+        source: std::io::Error,
+    },
+    /// Parsing the response failed.
     #[snafu(display("failed to parse size response"))]
-    Parse { source: std::num::ParseIntError },
+    Parse {
+        /// The source of the error.
+        source: std::num::ParseIntError,
+    },
 }
 
 impl Dimensions {
+    /// # Errors
+    ///
+    /// Returns an error if sending the SIZE command failed, reading the response
+    /// failed, or parsing the response failed.
     pub async fn try_from_stream(stream: &mut TcpStream) -> Result<Self, CanvasSizeError> {
         stream.write_all(SIZE_COMMAND).await.context(WriteSnafu)?;
         let mut buf = [0; SIZE_BUF_SIZE];
@@ -129,10 +150,14 @@ impl Dimensions {
         Ok(Self { width, height })
     }
 
+    /// The width of the video.
+    #[must_use]
     pub const fn width(&self) -> u32 {
         self.width
     }
 
+    /// The height of the video.
+    #[must_use]
     pub const fn height(&self) -> u32 {
         self.height
     }
@@ -149,11 +174,5 @@ impl FromIterator<Pixel> for Frame {
         Self {
             pixels: iter.into_iter().collect(),
         }
-    }
-}
-
-impl From<ArrayBase<ViewRepr<&u8>, Dim<[usize; 1]>>> for Pixel {
-    fn from(rgb: ArrayBase<ViewRepr<&u8>, Dim<[usize; 1]>>) -> Self {
-        Self::new(rgb[0], rgb[1], rgb[2])
     }
 }

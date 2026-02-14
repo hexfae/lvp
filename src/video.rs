@@ -30,16 +30,28 @@ pub enum ReadVideoError {
     },
     /// No width specified.
     #[snafu(display("LVP_MAX_WIDTH environment variable is not set"))]
-    NoWidth { source: VarError },
+    NoWidth {
+        /// The source of the error.
+        source: VarError,
+    },
     /// No height specified.
     #[snafu(display("LVP_MAX_HEIGHT environment variable is not set"))]
-    NoHeight { source: VarError },
+    NoHeight {
+        /// The source of the error.
+        source: VarError,
+    },
     /// Invalid width specified.
     #[snafu(display("LVP_MAX_WIDTH environment variable is not a valid number"))]
-    InvalidWidth { source: ParseIntError },
+    InvalidWidth {
+        /// The source of the error.
+        source: ParseIntError,
+    },
     /// Invalid height specified.
     #[snafu(display("LVP_MAX_HEIGHT environment variable is not a valid number"))]
-    InvalidHeight { source: ParseIntError },
+    InvalidHeight {
+        /// The source of the error.
+        source: ParseIntError,
+    },
     /// See [`DecodeError`].
     #[snafu(transparent)]
     Decode {
@@ -77,6 +89,15 @@ pub enum DecodeError {
 
 impl Video {
     /// Creates a new video from an S3 object.
+    ///
+    /// # Errors
+    ///
+    /// Errors if creating the temporary file fails, writing to it fails, parsing
+    /// ``LVP_MAX_WIDTH`` or ``LVP_MAX_HEIGHT`` fails, or building a decoder fails.
+    ///
+    /// # Panics
+    ///
+    /// Panics on Tokio join error
     pub async fn from_object(object: GetObjectOutput) -> Result<Self, ReadVideoError> {
         // video-rs requires a path (or url) to decode from
         let tmp_file = NamedTempFile::new().context(CreateTempFileSnafu)?;
@@ -114,10 +135,12 @@ impl Video {
     }
 
     /// Returns the dimensions of the video.
+    #[must_use]
     pub fn dimensions(&self) -> Dimensions {
         Dimensions::from(self.decoder.size_out())
     }
 
+    #[must_use]
     /// Returns the frame rate of the video.
     pub fn frame_rate(&self) -> f32 {
         self.decoder.frame_rate()
@@ -137,7 +160,7 @@ impl Iterator for Video {
                 .into_flat()
                 .exact_chunks(3)
                 .into_iter()
-                .map(Pixel::from)
+                .map(|rgb| Pixel::new(rgb[0], rgb[0], rgb[0]))
                 .collect(),
         )
     }
