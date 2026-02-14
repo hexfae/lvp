@@ -160,7 +160,7 @@ impl Iterator for Video {
                 .into_flat()
                 .exact_chunks(3)
                 .into_iter()
-                .map(|rgb| Pixel::new(rgb[0], rgb[0], rgb[0]))
+                .map(|rgb| Pixel::new(rgb[0], rgb[1], rgb[2]))
                 .collect(),
         )
     }
