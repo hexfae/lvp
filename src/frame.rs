@@ -39,10 +39,7 @@ const SIZE_BUF_SIZE: usize = 14;
 const SIZE_COMMAND: &[u8; 5] = b"SIZE\n";
 
 /// The binary command used to send a pixel to the server.
-const PIXEL_BINARY_COMMAND: [u8; 2] = *b"PB";
-
-/// The length of a pixelpwnr-server binary PX command in bytes: `PBxxyyrgba`.
-const BINARY_COMMAND_LENGTH: usize = 10;
+const PIXEL_BINARY_COMMAND: &[u8; 2] = b"PB";
 
 /// The maximum alpha value for a pixel.
 const OPAQUE_ALPHA: u8 = 255;
@@ -59,40 +56,34 @@ impl Frame {
         canvas: &Dimensions,
     ) {
         command_buffer.clear();
-        command_buffer.reserve(self.pixels.len() * BINARY_COMMAND_LENGTH);
+
+        let start_x = canvas.width().saturating_sub(video.width());
+        let start_y = canvas.height().saturating_sub(video.height());
+
+        let mut current_x = 0;
+        let mut current_y = 0;
+
         for (index, pixel) in self.pixels.iter().enumerate() {
+            if current_x >= video.width() {
+                current_x = 0;
+                current_y += 1;
+            }
+
             if previous_frame.is_some_and(|previous| previous.pixels[index] == *pixel) {
+                current_x += 1;
                 continue;
             }
 
+            let final_x = start_x + current_x;
+            let final_y = start_y + current_y;
+
             command_buffer.extend(PIXEL_BINARY_COMMAND);
-            command_buffer.extend(coordinates_from(index, video, canvas));
+            command_buffer.extend(&final_x.to_le_bytes()[0..2]);
+            command_buffer.extend(&final_y.to_le_bytes()[0..2]);
             command_buffer.extend(pixel.as_rgba_bytes());
+            current_x += 1;
         }
     }
-}
-
-/// Converts the index of a pixel to its coordinates.
-// videos are not expected to be larger than 65535x65535 pixels
-#[expect(clippy::cast_possible_truncation)]
-const fn coordinates_from(index: usize, video: &Dimensions, canvas: &Dimensions) -> [u8; 4] {
-    let index = index as u32;
-    let width = video.width();
-    let height = video.height();
-
-    let video_x = index % width;
-    let video_y = index / width;
-
-    let start_x = canvas.width().saturating_sub(width).saturating_add(video_x);
-    let start_y = canvas
-        .height()
-        .saturating_sub(height)
-        .saturating_add(video_y);
-
-    let x = start_x.to_le_bytes();
-    let y = start_y.to_le_bytes();
-
-    [x[0], x[1], y[0], y[1]]
 }
 
 impl Pixel {
