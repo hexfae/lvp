@@ -6,13 +6,14 @@ mod network;
 mod video;
 
 use client::{S3Client, S3Error};
+use lvp::CONFIG;
 use network::{Network, NetworkError};
 use snafu::Snafu;
 
 #[tokio::main]
 #[snafu::report]
 async fn main() -> Result<(), Error> {
-    let client = S3Client::new().await?;
+    let client = S3Client::new().await;
 
     loop {
         let mut network = Network::new().await?;

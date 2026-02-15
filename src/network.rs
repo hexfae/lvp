@@ -1,9 +1,6 @@
 //! The client struct responsible for sending pixels to the server.
 
-use std::{
-    env::{VarError, var},
-    time::Duration,
-};
+use std::time::Duration;
 
 use futures::future::try_join_all;
 use snafu::{ResultExt, Snafu};
@@ -14,6 +11,7 @@ use tokio::{
 };
 
 use crate::{
+    CONFIG,
     frame::{BINARY_COMMAND_LENGTH, CanvasSizeError, Dimensions, Frame},
     video::Video,
 };
@@ -33,56 +31,50 @@ pub struct Network {
 /// A network-related error occured.
 #[derive(Debug, Snafu)]
 pub enum NetworkError {
-    /// The `PIXELFLUT_ADDRESS` environment variable is not set.
-    #[snafu(display("PIXELFLUT_ADDRESS environment variable is not set"))]
-    NoAddressSet {
-        /// The source of the error.
-        source: VarError,
-    },
     /// Failed to open TCP connection to the specified server.
     #[snafu(display("failed to open TCP connection to the server"))]
-    TcpConnectError {
+    Connect {
         /// The source of the error.
         source: std::io::Error,
     },
     /// Failed to write to TCP stream on the specified server.
     #[snafu(display("failed to write to a TCP stream"))]
-    TcpWriteError {
+    Write {
         /// The source of the error.
         source: std::io::Error,
     },
     /// Failed to get the server's canvas size.
     #[snafu(transparent)]
-    TcpSizeError {
+    Size {
         /// The source of the error.
         source: CanvasSizeError,
     },
 }
 
 impl Network {
-    /// Creates a TCP connection to the pixelflut server on the address
-    /// specified in the `PIXELFLUT_ADDRESS` environment variable.
+    /// Creates a TCP connection to the configured pixelflut server.
     ///
     /// # Errors
     ///
-    /// Returns an error if the `PIXELFLUT_ADDRESS` environment variable is
-    /// not set or if the TCP connection fails.
+    /// Returns an error if the TCP connection fails.
     ///
     /// # Panics
     ///
     /// Panics if setting `TCP_NODELAY` fails, which it should never do.
     pub async fn new() -> Result<Self, NetworkError> {
-        let addr = var("PIXELFLUT_ADDRESS").context(NoAddressSetSnafu)?;
-        let n_streams = var("NUMBER_OF_STREAMS")
-            .unwrap_or_else(|_| "1".to_string())
-            .parse()
-            .unwrap_or(1);
-        let mut stream = TcpStream::connect(&addr).await.context(TcpConnectSnafu)?;
+        let address = &CONFIG.pixelflut_address;
+        let mut stream = TcpStream::connect(address).await.context(ConnectSnafu)?;
         stream.set_nodelay(true).expect("set_nodelay failed");
-        let canvas = Dimensions::try_from_stream(&mut stream).await?;
+        let canvas = if let (Some(width), Some(height)) =
+            (CONFIG.pixelflut_width, CONFIG.pixelflut_height)
+        {
+            Dimensions::new(width, height)
+        } else {
+            Dimensions::try_from_stream(&mut stream).await?
+        };
         let mut streams = vec![BufWriter::new(stream)];
-        for _ in 0..n_streams - 1 {
-            let stream = TcpStream::connect(&addr).await.context(TcpConnectSnafu)?;
+        for _ in 0..CONFIG.n_streams - 1 {
+            let stream = TcpStream::connect(address).await.context(ConnectSnafu)?;
             stream.set_nodelay(true).expect("set_nodelay failed");
             streams.push(BufWriter::new(stream));
         }
@@ -141,7 +133,7 @@ impl Network {
             .streams
             .iter_mut()
             .zip(command_buffers)
-            .map(|(stream, chunk)| async { stream.write_all(chunk).await.context(TcpWriteSnafu) });
+            .map(|(stream, chunk)| async { stream.write_all(chunk).await.context(WriteSnafu) });
 
         try_join_all(futures).await?;
         Ok(())

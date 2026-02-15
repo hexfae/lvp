@@ -114,6 +114,12 @@ pub enum CanvasSizeError {
 }
 
 impl Dimensions {
+    /// Constructs dimensions from a given width and height.
+    #[must_use]
+    pub const fn new(width: u32, height: u32) -> Self {
+        Self { width, height }
+    }
+
     /// # Errors
     ///
     /// Returns an error if sending the SIZE command failed, reading the response

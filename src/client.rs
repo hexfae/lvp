@@ -1,6 +1,10 @@
 //! The client struct responsible for interacting with the S3 bucket.
 
-use crate::video::{ReadVideoError, Video};
+use crate::{
+    CONFIG,
+    video::{ReadVideoError, Video},
+};
+use aws_config::Region;
 use aws_sdk_s3::{
     Client,
     error::SdkError,
@@ -8,10 +12,7 @@ use aws_sdk_s3::{
     presigning::PresigningConfig,
 };
 use snafu::{OptionExt, ResultExt, Snafu};
-use std::{
-    env::{VarError, var},
-    time::Duration,
-};
+use std::time::Duration;
 use url::Url;
 
 /// A wrapper around the S3 client.
@@ -25,12 +26,6 @@ pub struct S3Client {
 /// An error occurred with the S3 client.
 #[derive(Debug, Snafu)]
 pub enum S3Error {
-    /// The `S3_BUCKET_NAME` environment variable is not set.
-    #[snafu(display("S3_BUCKET_NAME environment variable is not set"))]
-    BucketNameUnsetError {
-        /// The source of the error.
-        source: VarError,
-    },
     /// An error occurred while listing videos.
     #[snafu(display("An error occurred while listing videos"))]
     ListVideos {
@@ -64,23 +59,19 @@ pub enum S3Error {
 
 impl S3Client {
     /// Creates a new client.
-    ///
-    /// # Errors
-    ///
-    /// This function will return an error if the `S3_BUCKET_NAME` environment variable is not set.
-    pub async fn new() -> Result<Self, S3Error> {
+    pub async fn new() -> Self {
+        let bucket_name = CONFIG.s3_bucket_name.clone();
         let sdk_config = aws_config::load_from_env().await;
         let config = aws_sdk_s3::config::Builder::from(&sdk_config)
             .force_path_style(true)
+            .region(Region::new(&CONFIG.aws_region))
             .build();
         let client = aws_sdk_s3::Client::from_conf(config);
 
-        let bucket_name = var("S3_BUCKET_NAME").context(BucketNameUnsetSnafu)?;
-
-        Ok(Self {
+        Self {
             client,
             bucket_name,
-        })
+        }
     }
 
     /// Gets the url for a video from its name.

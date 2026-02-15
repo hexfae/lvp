@@ -1,18 +1,14 @@
 //! The video struct containing the bytes of the video.
 
-use snafu::{ResultExt, Snafu};
-use std::{
-    env::{VarError, var},
-    io,
-    num::ParseIntError,
-};
+use snafu::Snafu;
+use std::io;
 use tokio::{
     sync::mpsc::{Receiver, channel},
     task::spawn_blocking,
 };
 use video_rs::{DecoderBuilder, Resize, Url};
 
-use crate::frame::Frame;
+use crate::{CONFIG, frame::Frame};
 
 /// A decoded video.
 pub struct Video {
@@ -31,30 +27,6 @@ pub enum ReadVideoError {
         /// The source of the error.
         source: io::Error,
     },
-    /// No width specified.
-    #[snafu(display("LVP_MAX_WIDTH environment variable is not set"))]
-    NoWidth {
-        /// The source of the error.
-        source: VarError,
-    },
-    /// No height specified.
-    #[snafu(display("LVP_MAX_HEIGHT environment variable is not set"))]
-    NoHeight {
-        /// The source of the error.
-        source: VarError,
-    },
-    /// Invalid width specified.
-    #[snafu(display("LVP_MAX_WIDTH environment variable is not a valid number"))]
-    InvalidWidth {
-        /// The source of the error.
-        source: ParseIntError,
-    },
-    /// Invalid height specified.
-    #[snafu(display("LVP_MAX_HEIGHT environment variable is not a valid number"))]
-    InvalidHeight {
-        /// The source of the error.
-        source: ParseIntError,
-    },
     /// An error occurred while creating a decoder from a URL.
     #[snafu(display("Failed to create decoder from {url}"))]
     CreateDecoder {
@@ -70,21 +42,14 @@ impl Video {
     ///
     /// # Errors
     ///
-    /// Returns an error if the `LVP_MAX_WIDTH` or `LVP_MAX_HEIGHT` environment variables
-    /// aren't set or fail to parse, or if decoding the video fails.
+    /// Returns an error if decoding the video fails.
     ///
     /// # Panics
     ///
     /// Panics on a Tokio join error (I don't know when these can happen).
     pub async fn from_url(url: Url) -> Result<Self, ReadVideoError> {
-        let width = var("LVP_MAX_WIDTH")
-            .context(NoWidthSnafu)?
-            .parse()
-            .context(InvalidWidthSnafu)?;
-        let height = var("LVP_MAX_HEIGHT")
-            .context(NoHeightSnafu)?
-            .parse()
-            .context(InvalidHeightSnafu)?;
+        let width = CONFIG.max_width;
+        let height = CONFIG.max_height;
 
         let (frame_rate, mut decoder) = spawn_blocking(move || {
             let decoder = DecoderBuilder::new(&url)
