@@ -14,7 +14,7 @@ use tokio::{
 };
 
 use crate::{
-    frame::{CanvasSizeError, Dimensions, Frame},
+    frame::{BINARY_COMMAND_LENGTH, CanvasSizeError, Dimensions, Frame},
     video::Video,
 };
 
@@ -126,14 +126,14 @@ impl Network {
     /// # Errors
     ///
     /// Returns an error if writing to the TCP connection(s) fail(s).
-    pub async fn send_video(&mut self, video: Video) -> Result<(), NetworkError> {
+    pub async fn send_video(&mut self, mut video: Video) -> Result<(), NetworkError> {
         let frame_duration = Duration::from_secs_f32(1.0 / video.frame_rate());
 
         let mut ticker = interval(frame_duration);
         ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
-        for frame in video {
-            ticker.tick().await;
+        while let Some(frame) = video.next_frame().await {
+            // ticker.tick().await;
             self.send_frame(&frame).await?;
             self.previous_frame = Some(frame);
         }
@@ -141,39 +141,46 @@ impl Network {
         Ok(())
     }
 
-    /// Sends a frame to the pixelflut server.
-    ///
     /// # Errors
     ///
-    /// Returns an error if writing to the TCP connection(s) fail(s).
+    /// Returns an error if writing to a TCP stream failed.
     pub async fn send_frame(&mut self, frame: &Frame) -> Result<(), NetworkError> {
         frame.fill_command_buffer(
             &mut self.command_buffer,
             self.previous_frame.as_ref(),
             &self.canvas,
         );
-        if self.command_buffer.len() < self.streams.len() {
+
+        if self.command_buffer.is_empty() {
             return Ok(());
         }
-        let chunk_size = self.command_buffer.len().div_ceil(self.streams.len());
+
+        let total_bytes = self.command_buffer.len();
+        let total_cmds = total_bytes / BINARY_COMMAND_LENGTH;
+        let cmds_per_stream = total_cmds.div_ceil(self.streams.len());
+        let chunk_size = cmds_per_stream * BINARY_COMMAND_LENGTH;
+
         let command_buffers = self.command_buffer.chunks(chunk_size);
-        let mut write_futures = Vec::new();
+
         let addr = self.addr.clone();
-        for (stream, command_buffer) in self.streams.iter_mut().zip(command_buffers) {
-            let addr = addr.clone();
-            write_futures.push(async move {
-                stream
-                    .write_all(command_buffer)
-                    .await
-                    .with_context(|_| TcpWriteSnafu { addr: addr.clone() })?;
-                stream
-                    .flush()
-                    .await
-                    .with_context(|_| TcpFlushSnafu { addr })?;
-                Ok::<(), NetworkError>(())
+
+        let futures = self
+            .streams
+            .iter_mut()
+            .zip(command_buffers)
+            .map(|(stream, chunk)| {
+                let addr = addr.clone();
+                async move {
+                    stream
+                        .write_all(chunk)
+                        .await
+                        .context(TcpWriteSnafu { addr: addr.clone() })?;
+                    stream.flush().await.context(TcpFlushSnafu { addr })?; // TODO: remove?
+                    Ok::<(), NetworkError>(())
+                }
             });
-        }
-        try_join_all(write_futures).await?;
+
+        try_join_all(futures).await?;
         Ok(())
     }
 }

@@ -155,7 +155,7 @@ impl S3Client {
     async fn select_video(&self, name: impl AsRef<str>) -> Result<Video, S3Error> {
         let url = self.get_video_url(name.as_ref()).await?;
 
-        let video = Video::from_url(&url).context(ReadVideoSnafu)?;
+        let video = Video::from_url(url).await.context(ReadVideoSnafu)?;
 
         Ok(video)
     }

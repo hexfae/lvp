@@ -6,14 +6,20 @@ use std::{
     io,
     num::ParseIntError,
 };
-use video_rs::{Decoder, DecoderBuilder, Resize, Url};
+use tokio::{
+    sync::mpsc::{Receiver, channel},
+    task::spawn_blocking,
+};
+use video_rs::{DecoderBuilder, Resize, Url};
 
 use crate::frame::Frame;
 
-/// A wrapper around a video.
+/// A decoded video.
 pub struct Video {
-    /// The `video-rs` decoder.
-    decoder: Decoder,
+    /// The frame rate of the video.
+    frame_rate: f32,
+    /// The receiver that receives the decoded frames.
+    receiver: Receiver<Frame>,
 }
 
 /// An error occured while reading a video.
@@ -60,13 +66,17 @@ pub enum ReadVideoError {
 }
 
 impl Video {
-    /// Retrieves a video from a url.
+    /// Builds a decoder for a video from a URL
     ///
     /// # Errors
     ///
-    /// Returns an error if `LVP_MAX_WIDTH` or `LVP_MAX_HEIGHT` failed to
-    /// parse, or if the video failed to
-    pub fn from_url(url: &Url) -> Result<Self, ReadVideoError> {
+    /// Returns an error if the `LVP_MAX_WIDTH` or `LVP_MAX_HEIGHT` environment variables
+    /// aren't set or fail to parse, or if decoding the video fails.
+    ///
+    /// # Panics
+    ///
+    /// Panics on a Tokio join error (I don't know when these can happen).
+    pub async fn from_url(url: Url) -> Result<Self, ReadVideoError> {
         let width = var("LVP_MAX_WIDTH")
             .context(NoWidthSnafu)?
             .parse()
@@ -76,35 +86,54 @@ impl Video {
             .parse()
             .context(InvalidHeightSnafu)?;
 
-        let decoder = DecoderBuilder::new(url)
-            .with_resize(Resize::FitEven(width, height))
-            .build()
-            .map_err(|e| ReadVideoError::CreateDecoder {
-                url: url.to_string(),
-                source: e,
-            })?;
-
-        Ok(Self { decoder })
-    }
-
-    #[must_use]
-    /// Returns the frame rate of the video.
-    pub fn frame_rate(&self) -> f32 {
-        self.decoder.frame_rate()
-    }
-}
-
-impl Iterator for Video {
-    type Item = Frame;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let data = self.decoder.decode().ok()?.1.flatten().to_vec();
-        let (width, height) = self.decoder.size_out();
-
-        Some(Frame {
-            data,
-            width,
-            height,
+        let (frame_rate, mut decoder) = spawn_blocking(move || {
+            let decoder = DecoderBuilder::new(&url)
+                .with_resize(Resize::FitEven(width, height))
+                .build()
+                .map_err(|why| ReadVideoError::CreateDecoder {
+                    url: url.to_string(),
+                    source: why,
+                })?;
+            Ok::<_, ReadVideoError>((decoder.frame_rate(), decoder))
         })
+        .await
+        .expect("tokio join error")?;
+
+        let (sender, receiver) = channel(5);
+
+        std::thread::spawn(move || {
+            loop {
+                let Ok((_, frame)) = decoder.decode() else {
+                    break;
+                };
+                let data = frame.flatten().to_vec();
+                let (width, height) = decoder.size_out();
+                let frame = Frame {
+                    data,
+                    width,
+                    height,
+                };
+
+                if let Err(why) = sender.blocking_send(frame) {
+                    eprintln!("error while sending frame: {why}");
+                    break;
+                }
+            }
+        });
+        Ok(Self {
+            frame_rate,
+            receiver,
+        })
+    }
+
+    /// The next frame of the video, if there is a next.
+    pub async fn next_frame(&mut self) -> Option<Frame> {
+        self.receiver.recv().await
+    }
+
+    /// The frame rate of the video.
+    #[must_use]
+    pub const fn frame_rate(&self) -> f32 {
+        self.frame_rate
     }
 }
