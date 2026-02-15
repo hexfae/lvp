@@ -14,7 +14,7 @@ use tokio::{
 };
 
 use crate::{
-    frame::{BINARY_COMMAND_LENGTH, CanvasSizeError, Dimensions, Frame},
+    frame::{CanvasSizeError, Dimensions, Frame},
     video::Video,
 };
 
@@ -22,8 +22,6 @@ use crate::{
 pub struct Network {
     /// The TCP stream(s).
     streams: Vec<BufWriter<TcpStream>>,
-    /// The pixelflut server address.
-    addr: String,
     /// The server's canvas' dimensions.
     canvas: Dimensions,
     /// The previous frame sent to the server, used for caching.
@@ -42,26 +40,14 @@ pub enum NetworkError {
         source: VarError,
     },
     /// Failed to open TCP connection to the specified server.
-    #[snafu(display("failed to open TCP connection to {addr}"))]
+    #[snafu(display("failed to open TCP connection to the server"))]
     TcpConnectError {
-        /// The address of the server.
-        addr: String,
         /// The source of the error.
         source: std::io::Error,
     },
     /// Failed to write to TCP stream on the specified server.
-    #[snafu(display("failed to write to TCP stream on {addr}"))]
+    #[snafu(display("failed to write to a TCP stream"))]
     TcpWriteError {
-        /// The address of the server.
-        addr: String,
-        /// The source of the error.
-        source: std::io::Error,
-    },
-    /// Failed to flush TCP stream on the specified server.
-    #[snafu(display("failed to flush TCP stream on {addr}"))]
-    TcpFlushError {
-        /// The address of the server.
-        addr: String,
         /// The source of the error.
         source: std::io::Error,
     },
@@ -91,21 +77,13 @@ impl Network {
             .unwrap_or_else(|_| "1".to_string())
             .parse()
             .unwrap_or(1);
-        let mut stream = TcpStream::connect(&addr)
-            .await
-            .with_context(|_| TcpConnectSnafu { addr: addr.clone() })?;
-        stream
-            .set_nodelay(true)
-            .expect("setting nodelay should never fail");
+        let mut stream = TcpStream::connect(&addr).await.context(TcpConnectSnafu)?;
+        stream.set_nodelay(true).expect("set_nodelay failed");
         let canvas = Dimensions::try_from_stream(&mut stream).await?;
         let mut streams = vec![BufWriter::new(stream)];
         for _ in 0..n_streams - 1 {
-            let stream = TcpStream::connect(&addr)
-                .await
-                .with_context(|_| TcpConnectSnafu { addr: addr.clone() })?;
-            stream
-                .set_nodelay(true)
-                .expect("setting nodelay should never fail");
+            let stream = TcpStream::connect(&addr).await.context(TcpConnectSnafu)?;
+            stream.set_nodelay(true).expect("set_nodelay failed");
             streams.push(BufWriter::new(stream));
         }
 
@@ -114,7 +92,6 @@ impl Network {
 
         Ok(Self {
             streams,
-            addr,
             canvas,
             previous_frame,
             command_buffer,
@@ -133,7 +110,7 @@ impl Network {
         ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
         while let Some(frame) = video.next_frame().await {
-            // ticker.tick().await;
+            ticker.tick().await;
             self.send_frame(&frame).await?;
             self.previous_frame = Some(frame);
         }
@@ -155,30 +132,14 @@ impl Network {
             return Ok(());
         }
 
-        let total_bytes = self.command_buffer.len();
-        let total_cmds = total_bytes / BINARY_COMMAND_LENGTH;
-        let cmds_per_stream = total_cmds.div_ceil(self.streams.len());
-        let chunk_size = cmds_per_stream * BINARY_COMMAND_LENGTH;
-
-        let command_buffers = self.command_buffer.chunks(chunk_size);
-
-        let addr = self.addr.clone();
+        let chunks = self.command_buffer.len().div_ceil(self.streams.len());
+        let command_buffers = self.command_buffer.chunks(chunks);
 
         let futures = self
             .streams
             .iter_mut()
             .zip(command_buffers)
-            .map(|(stream, chunk)| {
-                let addr = addr.clone();
-                async move {
-                    stream
-                        .write_all(chunk)
-                        .await
-                        .context(TcpWriteSnafu { addr: addr.clone() })?;
-                    stream.flush().await.context(TcpFlushSnafu { addr })?; // TODO: remove?
-                    Ok::<(), NetworkError>(())
-                }
-            });
+            .map(|(stream, chunk)| async { stream.write_all(chunk).await.context(TcpWriteSnafu) });
 
         try_join_all(futures).await?;
         Ok(())

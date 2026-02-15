@@ -126,7 +126,7 @@ impl Video {
         })
     }
 
-    /// The next frame of the video, if there is a next.
+    /// The next frame of the video, if there is a next one.
     pub async fn next_frame(&mut self) -> Option<Frame> {
         self.receiver.recv().await
     }

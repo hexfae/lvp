@@ -34,9 +34,6 @@ const SIZE_COMMAND: &[u8; 5] = b"SIZE\n";
 /// The binary command used to send a pixel to the server.
 const PIXEL_BINARY_COMMAND: &[u8; 2] = b"PB";
 
-/// The length of a pixelpwnr-server binary PX command in bytes: `PBxxyyrgba`.
-pub const BINARY_COMMAND_LENGTH: usize = 10;
-
 /// The maximum alpha value for a pixel.
 const OPAQUE_ALPHA: u8 = 255;
 
