@@ -31,11 +31,11 @@ const SIZE_BUF_SIZE: usize = 14;
 /// The SIZE command for asking for the server's dimensions.
 const SIZE_COMMAND: &[u8; 5] = b"SIZE\n";
 
-/// The binary command used to send a pixel to the server.
-const PIXEL_BINARY_COMMAND: &[u8; 2] = b"PB";
+/// The length of a pixelpwnr-server binary PX command in bytes: `PBxxyyrgba`.
+pub const BINARY_COMMAND_LENGTH: usize = 10;
 
 /// The maximum alpha value for a pixel.
-const OPAQUE_ALPHA: u8 = 255;
+const OPAQUE: u8 = 255;
 
 impl Frame {
     /// Converts the frame to a
@@ -49,40 +49,42 @@ impl Frame {
     ) {
         command_buffer.clear();
 
+        let offset_x = canvas.width() - self.width;
+        let offset_y = canvas.height() - self.height;
+
         let mut index = 0;
         for y in 0..self.height {
+            let final_y = (offset_y + y).to_le_bytes();
+
             for x in 0..self.width {
-                let r = self.data[index];
-                let g = self.data[index + 1];
-                let b = self.data[index + 2];
-                index += 3;
-
                 // reduce color "resolution" to cache more pixels
-                let r = (r / 10) * 10;
-                let g = (g / 10) * 10;
-                let b = (b / 10) * 10;
+                let r = (self.data[index] / 10) * 10;
+                let g = (self.data[index + 1] / 10) * 10;
+                let b = (self.data[index + 2] / 10) * 10;
 
-                if let Some(previous) = previous_frame
-                    && index <= previous.data.len()
-                {
-                    let pr = previous.data[index - 3];
-                    let pg = previous.data[index - 2];
-                    let pb = previous.data[index - 1];
+                if let Some(previous) = previous_frame {
+                    let pr = previous.data[index];
+                    let pg = previous.data[index + 1];
+                    let pb = previous.data[index + 2];
                     if r == pr && g == pg && b == pb {
+                        index += 3;
                         continue;
                     }
                 }
 
-                let offset_x = canvas.width() - self.width;
-                let offset_y = canvas.height() - self.height;
+                let final_x = (offset_x + x).to_le_bytes();
 
-                let final_x = offset_x + x;
-                let final_y = offset_y + y;
-
-                command_buffer.extend(PIXEL_BINARY_COMMAND);
-                command_buffer.extend(&final_x.to_le_bytes()[0..2]);
-                command_buffer.extend(&final_y.to_le_bytes()[0..2]);
-                command_buffer.extend([r, g, b, OPAQUE_ALPHA]);
+                command_buffer.push(b'P');
+                command_buffer.push(b'B');
+                command_buffer.push(final_x[0]);
+                command_buffer.push(final_x[1]);
+                command_buffer.push(final_y[0]);
+                command_buffer.push(final_y[1]);
+                command_buffer.push(r);
+                command_buffer.push(g);
+                command_buffer.push(b);
+                command_buffer.push(OPAQUE);
+                index += 3;
             }
         }
     }

@@ -14,7 +14,7 @@ use tokio::{
 };
 
 use crate::{
-    frame::{CanvasSizeError, Dimensions, Frame},
+    frame::{BINARY_COMMAND_LENGTH, CanvasSizeError, Dimensions, Frame},
     video::Video,
 };
 
@@ -88,7 +88,9 @@ impl Network {
         }
 
         let previous_frame = None;
-        let command_buffer = Vec::new();
+        let command_buffer = Vec::with_capacity(
+            BINARY_COMMAND_LENGTH * canvas.width() as usize * canvas.height() as usize,
+        );
 
         Ok(Self {
             streams,
