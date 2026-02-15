@@ -7,7 +7,6 @@ use aws_sdk_s3::{
     operation::{get_object::GetObjectError, list_objects_v2::ListObjectsV2Error},
     presigning::PresigningConfig,
 };
-use rand::{rng, seq::IndexedRandom};
 use snafu::{OptionExt, ResultExt, Snafu};
 use std::{
     env::{VarError, var},
@@ -120,7 +119,8 @@ impl S3Client {
     /// there are no videos in the S3 bucket, or parsing the video failed.
     pub async fn random_video(&self) -> Result<Video, S3Error> {
         let videos = self.video_names().await?;
-        let random_video_name = videos.choose(&mut rng()).context(NoVideosFoundSnafu)?;
+        let random_index = fastrand::usize(..videos.len());
+        let random_video_name = videos.get(random_index).context(NoVideosFoundSnafu)?;
         self.select_video(random_video_name).await
     }
 
