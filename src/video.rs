@@ -6,6 +6,7 @@ use tokio::{
     sync::mpsc::{Receiver, Sender, channel, error::SendError},
     task::spawn_blocking,
 };
+use tracing::warn;
 use video_rs::{DecoderBuilder, Resize, Url};
 
 use crate::{CONFIG, frame::Frame};
@@ -102,7 +103,7 @@ impl Video {
                 frame_buffer.height = height;
 
                 if let Err(why) = sender.blocking_send(frame_buffer).context(SendFrameSnafu) {
-                    eprintln!("{why}");
+                    warn!("{why}");
                     break;
                 }
             }
