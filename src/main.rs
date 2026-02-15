@@ -5,10 +5,13 @@ mod frame;
 mod network;
 mod video;
 
+use std::time::Duration;
+
 use client::{S3Client, S3Error};
 use lvp::CONFIG;
 use network::{Network, NetworkError};
 use snafu::Snafu;
+use tokio::time::sleep;
 
 #[tokio::main]
 #[snafu::report]
@@ -21,6 +24,7 @@ async fn main() -> Result<(), Error> {
             let video = client.random_video().await?;
             if let Err(why) = network.send_video(video).await {
                 eprintln!("Error sending video: {why}");
+                sleep(Duration::from_secs(1)).await;
                 break;
             }
         }
