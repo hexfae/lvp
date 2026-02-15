@@ -34,17 +34,30 @@ const SIZE_COMMAND: &[u8; 5] = b"SIZE\n";
 /// The length of a pixelpwnr-server binary PX command in bytes: `PBxxyyrgba`.
 pub const BINARY_COMMAND_LENGTH: usize = 10;
 
+/// The length of a pixel in bytes (RGB).
+pub const PIXEL_BYTE_LENGTH: usize = 3;
+
 /// The maximum alpha value for a pixel.
 const OPAQUE: u8 = 255;
 
 impl Frame {
+    #[must_use]
+    /// Create a new empty frame with enough capacity for a full image.
+    pub fn new_empty(width: u32, height: u32) -> Self {
+        Self {
+            data: Vec::with_capacity(PIXEL_BYTE_LENGTH * width as usize * height as usize),
+            height,
+            width,
+        }
+    }
+
     /// Converts the frame to a
     /// [pixelpwnr-server](https://github.com/timvisee/pixelpwnr-server) binary
     /// PX command.
     pub fn fill_command_buffer(
         &self,
         command_buffer: &mut Vec<u8>,
-        previous_frame: Option<&Self>,
+        previous_cache: &mut [u8],
         canvas: &Dimensions,
     ) {
         command_buffer.clear();
@@ -62,15 +75,17 @@ impl Frame {
                 let g = (self.data[index + 1] / 10) * 10;
                 let b = (self.data[index + 2] / 10) * 10;
 
-                if let Some(previous) = previous_frame {
-                    let pr = previous.data[index];
-                    let pg = previous.data[index + 1];
-                    let pb = previous.data[index + 2];
-                    if r == pr && g == pg && b == pb {
-                        index += 3;
-                        continue;
-                    }
+                if r == previous_cache[index]
+                    && g == previous_cache[index + 1]
+                    && b == previous_cache[index + 2]
+                {
+                    index += 3;
+                    continue;
                 }
+
+                previous_cache[index] = r;
+                previous_cache[index + 1] = g;
+                previous_cache[index + 2] = b;
 
                 let final_x = (offset_x + x).to_le_bytes();
 

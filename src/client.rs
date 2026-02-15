@@ -7,6 +7,7 @@ use crate::{
 use aws_config::Region;
 use aws_sdk_s3::{
     Client,
+    config::Credentials,
     error::SdkError,
     operation::{get_object::GetObjectError, list_objects_v2::ListObjectsV2Error},
     presigning::PresigningConfig,
@@ -64,6 +65,14 @@ impl S3Client {
         let sdk_config = aws_config::load_from_env().await;
         let config = aws_sdk_s3::config::Builder::from(&sdk_config)
             .force_path_style(true)
+            .credentials_provider(Credentials::new(
+                &CONFIG.aws_access_key_id,
+                &CONFIG.aws_secret_access_key,
+                None,
+                None,
+                "",
+            ))
+            .endpoint_url(&CONFIG.aws_endpoint_url)
             .region(Region::new(&CONFIG.aws_region))
             .build();
         let client = aws_sdk_s3::Client::from_conf(config);

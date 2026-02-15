@@ -12,9 +12,18 @@ use tokio::{
 
 use crate::{
     CONFIG,
-    frame::{BINARY_COMMAND_LENGTH, CanvasSizeError, Dimensions, Frame},
+    frame::{BINARY_COMMAND_LENGTH, CanvasSizeError, Dimensions, Frame, PIXEL_BYTE_LENGTH},
     video::Video,
 };
+
+/// An "empty" pixel in the cache's eyes.
+///
+/// This is used for the first frame of a video. There, the "previous frame"
+/// will be an entirely white (R255, G255, B255) image. Due to quantization,
+/// no pixel can ever be 255 (closest it can be is 250). Thus, the first frame
+/// will always be fully painted, without needing to put an Option around the
+/// previous frame.
+const EMPTY_PIXEL: u8 = 255;
 
 /// A wrapper around one or many TCP streams.
 pub struct Network {
@@ -23,7 +32,7 @@ pub struct Network {
     /// The server's canvas' dimensions.
     canvas: Dimensions,
     /// The previous frame sent to the server, used for caching.
-    previous_frame: Option<Frame>,
+    previous_frame: Vec<u8>,
     /// The command buffer used to build the command.
     command_buffer: Vec<u8>,
 }
@@ -79,10 +88,11 @@ impl Network {
             streams.push(BufWriter::new(stream));
         }
 
-        let previous_frame = None;
-        let command_buffer = Vec::with_capacity(
-            BINARY_COMMAND_LENGTH * canvas.width() as usize * canvas.height() as usize,
-        );
+        let cache_capacity = PIXEL_BYTE_LENGTH * canvas.width() as usize * canvas.height() as usize;
+        let command_capacity =
+            BINARY_COMMAND_LENGTH * canvas.width() as usize * canvas.height() as usize;
+        let previous_frame = vec![EMPTY_PIXEL; cache_capacity];
+        let command_buffer = Vec::with_capacity(command_capacity);
 
         Ok(Self {
             streams,
@@ -106,9 +116,9 @@ impl Network {
         while let Some(frame) = video.next_frame().await {
             ticker.tick().await;
             self.send_frame(&frame).await?;
-            self.previous_frame = Some(frame);
+            video.recycle(frame).await;
         }
-        self.previous_frame = None;
+        self.previous_frame.fill(EMPTY_PIXEL);
         Ok(())
     }
 
@@ -118,7 +128,7 @@ impl Network {
     pub async fn send_frame(&mut self, frame: &Frame) -> Result<(), NetworkError> {
         frame.fill_command_buffer(
             &mut self.command_buffer,
-            self.previous_frame.as_ref(),
+            &mut self.previous_frame,
             &self.canvas,
         );
 
