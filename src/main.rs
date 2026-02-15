@@ -16,9 +16,12 @@ async fn main() -> Result<(), Error> {
 
     loop {
         let mut network = Network::new().await?;
-        let video = client.random_video().await?;
-        if let Err(why) = network.send_video(video).await {
-            eprintln!("Error sending video: {why}");
+        loop {
+            let video = client.random_video().await?;
+            if let Err(why) = network.send_video(video).await {
+                eprintln!("Error sending video: {why}");
+                break;
+            }
         }
     }
 }
