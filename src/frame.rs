@@ -61,9 +61,9 @@ impl Frame {
                 index += 3;
 
                 // reduce color "resolution" to cache more pixels
-                // let r = (r / 10) * 10;
-                // let g = (g / 10) * 10;
-                // let b = (b / 10) * 10;
+                let r = (r / 10) * 10;
+                let g = (g / 10) * 10;
+                let b = (b / 10) * 10;
 
                 if let Some(previous) = previous_frame
                     && index <= previous.data.len()
