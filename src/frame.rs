@@ -70,10 +70,10 @@ impl Frame {
             let final_y = (offset_y + y).to_le_bytes();
 
             for x in 0..self.width {
-                // reduce color "resolution" to cache more pixels
-                let r = (self.data[index] / 10) * 10;
-                let g = (self.data[index + 1] / 10) * 10;
-                let b = (self.data[index + 2] / 10) * 10;
+                // reduce (quantize) color "resolution" to cache more pixels
+                let r = self.data[index] & 0xF0;
+                let g = self.data[index + 1] & 0xF0;
+                let b = self.data[index + 2] & 0xF0;
 
                 if r == previous_cache[index]
                     && g == previous_cache[index + 1]
