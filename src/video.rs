@@ -94,11 +94,8 @@ impl Video {
                     break;
                 };
 
-                // TODO: make the frame buffers big enough to hold the biggest frame (e.g. 640x540)
-                if frame_buffer.data.len() != raw_slice.len() {
-                    frame_buffer.data.resize(raw_slice.len(), 0);
-                }
-                frame_buffer.data.copy_from_slice(raw_slice);
+                frame_buffer.data.clear();
+                frame_buffer.data.extend_from_slice(raw_slice);
                 frame_buffer.width = width;
                 frame_buffer.height = height;
 
