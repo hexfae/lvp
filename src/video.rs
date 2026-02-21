@@ -84,7 +84,7 @@ impl Video {
                 .context(SendFrameSnafu)?;
         }
 
-        std::thread::spawn(move || {
+        spawn_blocking(move || {
             while let Some(mut frame_buffer) = recycle_receiver.blocking_recv() {
                 let Ok((_, frame)) = decoder.decode() else {
                     break;
