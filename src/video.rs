@@ -73,8 +73,8 @@ impl Video {
         .await
         .expect("tokio join error")?;
 
-        let (sender, receiver) = channel(5);
-        let (recycle_sender, mut recycle_receiver) = channel(5);
+        let (sender, receiver) = channel(64);
+        let (recycle_sender, mut recycle_receiver) = channel(64);
 
         let (width, height) = decoder.size_out();
         for _ in 0..5 {
