@@ -1,6 +1,6 @@
 //! The client struct responsible for sending pixels to the server.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures::future::try_join_all;
 use snafu::{ResultExt, Snafu};
@@ -109,12 +109,17 @@ impl Network {
     /// Returns an error if writing to the TCP connection(s) fail(s).
     pub async fn send_video(&mut self, mut video: Video) -> Result<(), NetworkError> {
         let frame_duration = Duration::from_secs_f32(1.0 / video.frame_rate());
+        let mut last_refresh = Instant::now();
 
         let mut ticker = interval(frame_duration);
         ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
         while let Some(frame) = video.next_frame().await {
             ticker.tick().await;
+            if last_refresh.elapsed() >= Duration::from_secs(2) {
+                self.previous_frame.fill(EMPTY_PIXEL);
+                last_refresh = Instant::now();
+            }
             self.send_frame(&frame).await?;
             video.recycle(frame).await;
         }
