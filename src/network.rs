@@ -97,9 +97,12 @@ impl Network {
             streams.extend(try_join_all(connect_futures).await?);
         }
 
-        let cache_capacity = PIXEL_BYTE_LENGTH * canvas.width() as usize * canvas.height() as usize;
-        let command_capacity =
-            BINARY_COMMAND_LENGTH * canvas.width() as usize * canvas.height() as usize;
+        let width = CONFIG.max_width as usize;
+        let height = CONFIG.max_height as usize;
+
+        let cache_capacity = PIXEL_BYTE_LENGTH * width * height;
+        let command_capacity = BINARY_COMMAND_LENGTH * width * height;
+
         let previous_frame = vec![EMPTY_PIXEL; cache_capacity];
         let command_buffer = Vec::with_capacity(command_capacity);
 
