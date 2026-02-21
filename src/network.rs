@@ -141,8 +141,11 @@ impl Network {
             return Ok(());
         }
 
-        let chunks = self.command_buffer.len().div_ceil(self.streams.len());
-        let command_buffers = self.command_buffer.chunks(chunks);
+        let total_commands = self.command_buffer.len() / BINARY_COMMAND_LENGTH;
+        let commands_per_stream = total_commands.div_ceil(self.streams.len());
+        let chunk_size = commands_per_stream * BINARY_COMMAND_LENGTH;
+
+        let command_buffers = self.command_buffer.chunks(chunk_size);
 
         let futures = self
             .streams
