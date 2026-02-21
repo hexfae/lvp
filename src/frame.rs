@@ -89,16 +89,9 @@ impl Frame {
 
                 let final_x = (offset_x + x).to_le_bytes();
 
-                command_buffer.push(b'P');
-                command_buffer.push(b'B');
-                command_buffer.push(final_x[0]);
-                command_buffer.push(final_x[1]);
-                command_buffer.push(final_y[0]);
-                command_buffer.push(final_y[1]);
-                command_buffer.push(r);
-                command_buffer.push(g);
-                command_buffer.push(b);
-                command_buffer.push(OPAQUE);
+                command_buffer.extend_from_slice(&[
+                    b'P', b'B', final_x[0], final_x[1], final_y[0], final_y[1], r, g, b, OPAQUE,
+                ]);
                 index += 3;
             }
         }
