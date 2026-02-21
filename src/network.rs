@@ -72,20 +72,29 @@ impl Network {
     /// Panics if setting `TCP_NODELAY` fails, which it should never do.
     pub async fn new() -> Result<Self, NetworkError> {
         let address = &CONFIG.pixelflut_address;
-        let mut stream = TcpStream::connect(address).await.context(ConnectSnafu)?;
-        stream.set_nodelay(true).expect("set_nodelay failed");
+
+        let mut first_stream = TcpStream::connect(address).await.context(ConnectSnafu)?;
+        first_stream.set_nodelay(true).context(ConnectSnafu)?;
+
         let canvas = if let (Some(width), Some(height)) =
             (CONFIG.pixelflut_width, CONFIG.pixelflut_height)
         {
             Dimensions::new(width, height)
         } else {
-            Dimensions::try_from_stream(&mut stream).await?
+            Dimensions::try_from_stream(&mut first_stream).await?
         };
-        let mut streams = vec![stream];
-        for _ in 0..CONFIG.n_streams - 1 {
-            let stream = TcpStream::connect(address).await.context(ConnectSnafu)?;
-            stream.set_nodelay(true).expect("set_nodelay failed");
-            streams.push(stream);
+
+        let mut streams = Vec::with_capacity(CONFIG.n_streams.max(1));
+        streams.push(first_stream);
+
+        if CONFIG.n_streams > 1 {
+            let connect_futures = (1..CONFIG.n_streams).map(|_| async {
+                let stream = TcpStream::connect(address).await.context(ConnectSnafu)?;
+                stream.set_nodelay(true).context(ConnectSnafu)?;
+                Ok::<_, NetworkError>(stream)
+            });
+
+            streams.extend(try_join_all(connect_futures).await?);
         }
 
         let cache_capacity = PIXEL_BYTE_LENGTH * canvas.width() as usize * canvas.height() as usize;
