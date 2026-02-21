@@ -5,7 +5,7 @@ use std::time::Duration;
 use futures::future::try_join_all;
 use snafu::{ResultExt, Snafu};
 use tokio::{
-    io::{AsyncWriteExt, BufWriter},
+    io::AsyncWriteExt,
     net::TcpStream,
     time::{MissedTickBehavior, interval},
 };
@@ -28,7 +28,7 @@ const EMPTY_PIXEL: u8 = 255;
 /// A wrapper around one or many TCP streams.
 pub struct Network {
     /// The TCP stream(s).
-    streams: Vec<BufWriter<TcpStream>>,
+    streams: Vec<TcpStream>,
     /// The server's canvas' dimensions.
     canvas: Dimensions,
     /// The previous frame sent to the server, used for caching.
@@ -81,11 +81,11 @@ impl Network {
         } else {
             Dimensions::try_from_stream(&mut stream).await?
         };
-        let mut streams = vec![BufWriter::new(stream)];
+        let mut streams = vec![stream];
         for _ in 0..CONFIG.n_streams - 1 {
             let stream = TcpStream::connect(address).await.context(ConnectSnafu)?;
             stream.set_nodelay(true).expect("set_nodelay failed");
-            streams.push(BufWriter::new(stream));
+            streams.push(stream);
         }
 
         let cache_capacity = PIXEL_BYTE_LENGTH * canvas.width() as usize * canvas.height() as usize;
