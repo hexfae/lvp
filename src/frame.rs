@@ -54,6 +54,7 @@ impl Frame {
     /// Converts the frame to a
     /// [pixelpwnr-server](https://github.com/timvisee/pixelpwnr-server) binary
     /// PX command.
+    #[expect(clippy::cast_possible_truncation)] // this is the desired behavior
     pub fn fill_command_buffer(
         &self,
         command_buffer: &mut Vec<u8>,
@@ -65,35 +66,34 @@ impl Frame {
         let offset_x = canvas.width() - self.width;
         let offset_y = canvas.height() - self.height;
 
-        let mut index = 0;
-        for y in 0..self.height {
-            let final_y = (offset_y + y).to_le_bytes();
+        for (index, (pixel, cached_pixel)) in self
+            .data
+            .chunks_exact(PIXEL_BYTE_LENGTH)
+            .zip(previous_cache.chunks_exact_mut(PIXEL_BYTE_LENGTH))
+            .enumerate()
+        {
+            // reduce (quantize) color "resolution" to cache more pixels
+            let r = pixel[0] & 0xF0;
+            let g = pixel[1] & 0xF0;
+            let b = pixel[2] & 0xF0;
 
-            for x in 0..self.width {
-                // reduce (quantize) color "resolution" to cache more pixels
-                let r = self.data[index] & 0xF0;
-                let g = self.data[index + 1] & 0xF0;
-                let b = self.data[index + 2] & 0xF0;
-
-                if r == previous_cache[index]
-                    && g == previous_cache[index + 1]
-                    && b == previous_cache[index + 2]
-                {
-                    index += 3;
-                    continue;
-                }
-
-                previous_cache[index] = r;
-                previous_cache[index + 1] = g;
-                previous_cache[index + 2] = b;
-
-                let final_x = (offset_x + x).to_le_bytes();
-
-                command_buffer.extend_from_slice(&[
-                    b'P', b'B', final_x[0], final_x[1], final_y[0], final_y[1], r, g, b, OPAQUE,
-                ]);
-                index += 3;
+            if r == cached_pixel[0] && g == cached_pixel[1] && b == cached_pixel[2] {
+                continue;
             }
+
+            cached_pixel[0] = r;
+            cached_pixel[1] = g;
+            cached_pixel[2] = b;
+
+            let x_pos = (index as u32) % self.width;
+            let y_pos = (index as u32) / self.width;
+
+            let x_bytes = ((offset_x + x_pos) as u16).to_le_bytes();
+            let y_bytes = ((offset_y + y_pos) as u16).to_le_bytes();
+
+            command_buffer.extend_from_slice(&[
+                b'P', b'B', x_bytes[0], x_bytes[1], y_bytes[0], y_bytes[1], r, g, b, OPAQUE,
+            ]);
         }
     }
 }
