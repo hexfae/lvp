@@ -99,11 +99,15 @@ impl Frame {
                         .zip(cache_row.chunks_exact_mut(PIXEL_BYTE_LENGTH))
                         .enumerate()
                     {
-                        let r = pixel[0] & 0xF0;
-                        let g = pixel[1] & 0xF0;
-                        let b = pixel[2] & 0xF0;
+                        let r = pixel[0];
+                        let g = pixel[1];
+                        let b = pixel[2];
 
-                        if r == cached_pixel[0] && g == cached_pixel[1] && b == cached_pixel[2] {
+                        let diff = u16::from(r.abs_diff(cached_pixel[0]))
+                            + u16::from(g.abs_diff(cached_pixel[1]))
+                            + u16::from(g.abs_diff(cached_pixel[2]));
+
+                        if diff < 15 {
                             continue;
                         }
 
