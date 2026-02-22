@@ -1,5 +1,7 @@
 //! The frame struct representing a single frame of a video.
 
+use bytes::BufMut;
+use rayon::prelude::*;
 use snafu::{ResultExt, Snafu};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -18,12 +20,16 @@ pub struct Frame {
 }
 
 /// The dimensions of the video, in pixels.
+#[derive(Clone)]
 pub struct Dimensions {
     /// The width of the video, in pixels.
     width: u32,
     /// The height of the video, in pixels.
     height: u32,
 }
+
+/// "PB" in bytes.
+const PB: u16 = 0x4250;
 
 /// Enough bytes for `SIZE xxxx yyyy`.
 const SIZE_BUF_SIZE: usize = 14;
@@ -55,46 +61,68 @@ impl Frame {
     /// [pixelpwnr-server](https://github.com/timvisee/pixelpwnr-server) binary
     /// PX command.
     #[expect(clippy::cast_possible_truncation)] // this is the desired behavior
-    pub fn fill_command_buffer(
+    pub fn fill_command_buffers(
         &self,
-        command_buffer: &mut Vec<u8>,
+        command_buffers: &mut [Vec<u8>],
         previous_cache: &mut [u8],
         canvas: &Dimensions,
     ) {
-        command_buffer.clear();
-
         let offset_x = canvas.width() - self.width;
         let offset_y = canvas.height() - self.height;
 
-        for (index, (pixel, cached_pixel)) in self
-            .data
-            .chunks_exact(PIXEL_BYTE_LENGTH)
-            .zip(previous_cache.chunks_exact_mut(PIXEL_BYTE_LENGTH))
+        let width = self.width as usize;
+        let height = self.height as usize;
+        let n_streams = command_buffers.len();
+
+        let rows_per_stream = height.div_ceil(n_streams);
+        let bytes_per_chunk = rows_per_stream * width * PIXEL_BYTE_LENGTH;
+
+        command_buffers
+            .par_iter_mut()
+            .zip(self.data.par_chunks(bytes_per_chunk))
+            .zip(previous_cache.par_chunks_mut(bytes_per_chunk))
             .enumerate()
-        {
-            // reduce (quantize) color "resolution" to cache more pixels
-            let r = pixel[0] & 0xF0;
-            let g = pixel[1] & 0xF0;
-            let b = pixel[2] & 0xF0;
+            .for_each(|(chunk_index, ((buffer, pixel_chunk), cache_chunk))| {
+                buffer.clear();
 
-            if r == cached_pixel[0] && g == cached_pixel[1] && b == cached_pixel[2] {
-                continue;
-            }
+                let start_y = chunk_index * rows_per_stream;
 
-            cached_pixel[0] = r;
-            cached_pixel[1] = g;
-            cached_pixel[2] = b;
+                for (row_index, (pixel_row, cache_row)) in pixel_chunk
+                    .chunks_exact(width * PIXEL_BYTE_LENGTH)
+                    .zip(cache_chunk.chunks_exact_mut(width * PIXEL_BYTE_LENGTH))
+                    .enumerate()
+                {
+                    let current_y = (offset_y as usize + start_y + row_index) as u16;
 
-            let x_pos = (index as u32) % self.width;
-            let y_pos = (index as u32) / self.width;
+                    for (column_index, (pixel, cached_pixel)) in pixel_row
+                        .chunks_exact(PIXEL_BYTE_LENGTH)
+                        .zip(cache_row.chunks_exact_mut(PIXEL_BYTE_LENGTH))
+                        .enumerate()
+                    {
+                        let r = pixel[0] & 0xF0;
+                        let g = pixel[1] & 0xF0;
+                        let b = pixel[2] & 0xF0;
 
-            let x_bytes = ((offset_x + x_pos) as u16).to_le_bytes();
-            let y_bytes = ((offset_y + y_pos) as u16).to_le_bytes();
+                        if r == cached_pixel[0] && g == cached_pixel[1] && b == cached_pixel[2] {
+                            continue;
+                        }
 
-            command_buffer.extend_from_slice(&[
-                b'P', b'B', x_bytes[0], x_bytes[1], y_bytes[0], y_bytes[1], r, g, b, OPAQUE,
-            ]);
-        }
+                        cached_pixel[0] = r;
+                        cached_pixel[1] = g;
+                        cached_pixel[2] = b;
+
+                        let current_x = (offset_x as usize + column_index) as u16;
+
+                        buffer.put_u16_le(PB);
+                        buffer.put_u16_le(current_x);
+                        buffer.put_u16_le(current_y);
+                        buffer.put_u8(r);
+                        buffer.put_u8(g);
+                        buffer.put_u8(b);
+                        buffer.put_u8(OPAQUE);
+                    }
+                }
+            });
     }
 }
 

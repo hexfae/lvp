@@ -1,5 +1,7 @@
 //! LUDD video processor.
 
+use std::thread::available_parallelism;
+
 use clap::Parser;
 
 pub mod client;
@@ -42,6 +44,6 @@ pub struct Config {
     #[arg(long, env = "PIXELFLUT_HEIGHT")]
     pub pixelflut_height: Option<u32>,
 
-    #[arg(long, env = "NUMBER_OF_STREAMS", default_value_t = 10)]
+    #[arg(long, env = "NUMBER_OF_STREAMS", default_value_t = available_parallelism().map(|n| n.get()).unwrap_or(10))]
     pub n_streams: usize,
 }

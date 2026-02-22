@@ -18,7 +18,7 @@ use tracing::{error, info};
 #[snafu::report]
 async fn main() -> Result<(), Error> {
     tracing_subscriber::fmt::init();
-    info!("launching lvp 0.1.0");
+    info!("launching lvp 0.2.0");
     let client = S3Client::new().await;
 
     loop {

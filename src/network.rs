@@ -1,12 +1,16 @@
 //! The client struct responsible for sending pixels to the server.
 
-use std::time::{Duration, Instant};
+use std::{
+    mem,
+    time::{Duration, Instant},
+};
 
 use futures::future::try_join_all;
 use snafu::{ResultExt, Snafu};
 use tokio::{
     io::AsyncWriteExt,
     net::TcpStream,
+    task::spawn_blocking,
     time::{MissedTickBehavior, interval},
 };
 
@@ -34,7 +38,7 @@ pub struct Network {
     /// The previous frame sent to the server, used for caching.
     previous_frame: Vec<u8>,
     /// The command buffer used to build the command.
-    command_buffer: Vec<u8>,
+    command_buffers: Vec<Vec<u8>>,
 }
 
 /// A network-related error occured.
@@ -57,6 +61,12 @@ pub enum NetworkError {
     Size {
         /// The source of the error.
         source: CanvasSizeError,
+    },
+    /// Failed to join a tokio task.
+    #[snafu(display("Error while joining tokio tasks"))]
+    Join {
+        /// The source of the error.
+        source: tokio::task::JoinError,
     },
 }
 
@@ -99,18 +109,19 @@ impl Network {
 
         let width = CONFIG.max_width as usize;
         let height = CONFIG.max_height as usize;
+        let n_streams = streams.len();
 
         let cache_capacity = PIXEL_BYTE_LENGTH * width * height;
-        let command_capacity = BINARY_COMMAND_LENGTH * width * height;
+        let command_capacity = BINARY_COMMAND_LENGTH * width * height / n_streams;
 
         let previous_frame = vec![EMPTY_PIXEL; cache_capacity];
-        let command_buffer = Vec::with_capacity(command_capacity);
+        let command_buffers = vec![Vec::with_capacity(command_capacity); n_streams];
 
         Ok(Self {
             streams,
             canvas,
             previous_frame,
-            command_buffer,
+            command_buffers,
         })
     }
 
@@ -132,8 +143,8 @@ impl Network {
                 self.previous_frame.fill(EMPTY_PIXEL);
                 last_refresh = Instant::now();
             }
-            self.send_frame(&frame).await?;
-            video.recycle(frame).await;
+            let used_frame = self.send_frame(frame).await?;
+            video.recycle(used_frame).await;
         }
         self.previous_frame.fill(EMPTY_PIXEL);
         Ok(())
@@ -142,30 +153,33 @@ impl Network {
     /// # Errors
     ///
     /// Returns an error if writing to a TCP stream failed.
-    pub async fn send_frame(&mut self, frame: &Frame) -> Result<(), NetworkError> {
-        frame.fill_command_buffer(
-            &mut self.command_buffer,
-            &mut self.previous_frame,
-            &self.canvas,
-        );
+    pub async fn send_frame(&mut self, frame: Frame) -> Result<Frame, NetworkError> {
+        let mut buffers = mem::take(&mut self.command_buffers);
+        let mut cache = mem::take(&mut self.previous_frame);
+        let canvas = self.canvas.clone();
 
-        if self.command_buffer.is_empty() {
-            return Ok(());
-        }
+        let (filled_buffers, returned_cache, returned_frame) = spawn_blocking(move || {
+            frame.fill_command_buffers(&mut buffers, &mut cache, &canvas);
+            (buffers, cache, frame)
+        })
+        .await
+        .context(JoinSnafu)?;
 
-        let total_commands = self.command_buffer.len() / BINARY_COMMAND_LENGTH;
-        let commands_per_stream = total_commands.div_ceil(self.streams.len());
-        let chunk_size = commands_per_stream * BINARY_COMMAND_LENGTH;
+        self.command_buffers = filled_buffers;
+        self.previous_frame = returned_cache;
 
-        let command_buffers = self.command_buffer.chunks(chunk_size);
-
-        let futures = self
-            .streams
-            .iter_mut()
-            .zip(command_buffers)
-            .map(|(stream, chunk)| async { stream.write_all(chunk).await.context(WriteSnafu) });
+        let futures =
+            self.streams
+                .iter_mut()
+                .zip(&self.command_buffers)
+                .map(|(stream, chunk)| async move {
+                    if !chunk.is_empty() {
+                        stream.write_all(chunk).await.context(WriteSnafu)?;
+                    }
+                    Ok::<_, NetworkError>(())
+                });
 
         try_join_all(futures).await?;
-        Ok(())
+        Ok(returned_frame)
     }
 }
