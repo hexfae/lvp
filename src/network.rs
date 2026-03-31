@@ -10,8 +10,9 @@ use snafu::{ResultExt, Snafu};
 use tokio::{
     io::AsyncWriteExt,
     net::TcpStream,
-    task::spawn_blocking,
-    time::{MissedTickBehavior, interval},
+    sync::watch::{Sender, channel},
+    task::{JoinHandle, spawn_blocking},
+    time::{MissedTickBehavior, interval, sleep},
 };
 
 use crate::{
@@ -32,7 +33,8 @@ const EMPTY_PIXEL: u8 = 255;
 /// A wrapper around one or many TCP streams.
 pub struct Network {
     /// The TCP stream(s).
-    streams: Vec<TcpStream>,
+    workers: Vec<JoinHandle<()>>,
+    tx: Sender<Vec<Vec<u8>>>,
     /// The server's canvas' dimensions.
     canvas: Dimensions,
     /// The previous frame sent to the server, used for caching.
@@ -82,6 +84,39 @@ impl Network {
     /// Panics if setting `TCP_NODELAY` fails, which it should never do.
     pub async fn new() -> Result<Self, NetworkError> {
         let address = &CONFIG.pixelflut_address;
+        let (tx, rx) = channel(vec![vec![]; CONFIG.n_streams]);
+        let mut workers = Vec::new();
+
+        for stream_idx in 0..CONFIG.n_streams.max(1) {
+            let mut rx = rx.clone();
+            let addr = address.clone();
+
+            let worker = tokio::spawn(async move {
+                loop {
+                    let mut stream = if let Ok(s) = TcpStream::connect(&addr).await {
+                        let _ = s.set_nodelay(true);
+                        s
+                    } else {
+                        sleep(Duration::from_millis(500)).await;
+                        continue;
+                    };
+                    loop {
+                        if rx.changed().await.is_err() {
+                            return;
+                        }
+
+                        let buffers = rx.borrow().clone();
+                        if let Some(chunk) = buffers.get(stream_idx)
+                            && !chunk.is_empty()
+                            && stream.write_all(chunk).await.is_err()
+                        {
+                            break;
+                        }
+                    }
+                }
+            });
+            workers.push(worker);
+        }
 
         let mut first_stream = TcpStream::connect(address).await.context(ConnectSnafu)?;
         first_stream.set_nodelay(true).context(ConnectSnafu)?;
@@ -118,7 +153,8 @@ impl Network {
         let command_buffers = vec![Vec::with_capacity(command_capacity); n_streams];
 
         Ok(Self {
-            streams,
+            workers,
+            tx,
             canvas,
             previous_frame,
             command_buffers,
@@ -168,18 +204,8 @@ impl Network {
         self.command_buffers = filled_buffers;
         self.previous_frame = returned_cache;
 
-        let futures =
-            self.streams
-                .iter_mut()
-                .zip(&self.command_buffers)
-                .map(|(stream, chunk)| async move {
-                    if !chunk.is_empty() {
-                        stream.write_all(chunk).await.context(WriteSnafu)?;
-                    }
-                    Ok::<_, NetworkError>(())
-                });
+        let _ = self.tx.send(self.command_buffers.clone());
 
-        try_join_all(futures).await?;
         Ok(returned_frame)
     }
 }
